@@ -176,6 +176,11 @@ td.num,th.num{text-align:right}
 td.acts{white-space:nowrap;text-align:right}
 td .sub{color:var(--muted);font-size:12px}
 .empty{padding:32px 16px;text-align:center;color:var(--muted)}
+.hlist{list-style:none;margin:10px 0 0;padding:0;max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:4px}
+.hlist li{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;cursor:pointer;background:var(--surface)}
+.hlist li:hover,.hlist li[aria-selected="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.hlist li small{color:var(--muted)}
+.line-tag{font-size:11px;color:var(--tan);font-weight:600;white-space:nowrap}
 .empty b{display:block;color:var(--ink);font-family:var(--f-display);font-size:16px;margin-bottom:4px}
 
 /* teksten */
@@ -232,6 +237,7 @@ a.btn{text-decoration:none}
       <button role="tab" data-tab="maken" aria-selected="true">Factuur maken</button>
       <button role="tab" data-tab="facturen" aria-selected="false">Facturen</button>
       <button role="tab" data-tab="klanten" aria-selected="false">Klanten</button>
+      <button role="tab" data-tab="paarden" aria-selected="false">Paarden</button>
       <button role="tab" data-tab="teksten" aria-selected="false">Standaardteksten</button>
       <button role="tab" data-tab="instellingen" aria-selected="false">Instellingen</button>
     </nav>
@@ -300,7 +306,7 @@ a.btn{text-decoration:none}
         <div class="card">
           <div class="card-h"><h2>Goederen of prestaties</h2><span class="hint">Elke regel in de beschrijving = één regel op de factuur</span></div>
           <div class="lines" id="lines"></div>
-          <div class="add-row"><button class="btn" id="addLine">+ Regel toevoegen</button></div>
+          <div class="add-row"><button class="btn" id="addLine">+ Regel toevoegen</button><button class="btn" id="addHorse">+ Paard of veulen</button></div>
         </div>
 
         <div class="card">
@@ -367,6 +373,22 @@ a.btn{text-decoration:none}
     </div>
   </section>
 
+  <!-- PAARDEN -->
+  <section class="tab" id="tab-paarden" hidden>
+    <div class="toolbar">
+      <input id="pZoek" type="text" placeholder="Zoek op naam, chipnummer, moeder of vader" aria-label="Paarden zoeken">
+      <span class="grow hint" id="pSum"></span>
+      <button class="btn primary" id="pNew">+ Nieuw paard</button>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Naam</th><th>Geboren</th><th>Chipnummer</th><th>Afstamming</th><th>Factuur</th><th></th></tr></thead>
+        <tbody id="pBody"></tbody>
+      </table>
+      <div id="pEmpty" class="empty" hidden><b>Nog geen paarden</b>Voeg een paard toe met + Nieuw paard, of lees de geboortelijst in via Instellingen.</div>
+    </div>
+  </section>
+
   <!-- STANDAARDTEKSTEN -->
   <section class="tab" id="tab-teksten" hidden>
     <div class="toolbar">
@@ -399,7 +421,7 @@ a.btn{text-decoration:none}
         <div class="card-h"><h2>Opslag</h2></div>
         <p style="margin:0" id="locText">Niet verbonden.</p>
         <p class="hint" style="margin:0">Elke wijziging komt als JSON-bestand in deze SharePoint-map, PDF's in de submap PDF. SharePoint bewaart van elk bestand de vorige versies.</p>
-        <div class="row" style="gap:8px"><button class="btn" id="backupBtn">Back-up downloaden (JSON)</button><button class="btn" id="histBtn">Historiek importeren (JSON)</button><input type="file" id="histFile" accept=".json,application/json" hidden></div>
+        <div class="row" style="gap:8px"><button class="btn" id="backupBtn">Back-up downloaden (JSON)</button><button class="btn" id="histBtn">Gegevens importeren (JSON)</button><input type="file" id="histFile" accept=".json,application/json" hidden></div>
       </div>
       <div class="card">
         <div class="card-h"><h2>Nummering</h2></div>
@@ -1110,7 +1132,7 @@ function installPreviewFonts(){
 }
 
 /* ---------- state ---------- */
-const state = {klanten:[], facturen:[], teksten:[], verkopen:[], bedrijf:{}, nummering:{laatste:{}}, instellingen:{standaardBtw:21}, loaded:false};
+const state = {klanten:[], facturen:[], teksten:[], verkopen:[], paarden:[], bedrijf:{}, nummering:{laatste:{}}, instellingen:{standaardBtw:21}, loaded:false};
 /* ---------- Microsoft 365: login (MSAL) + opslag als JSON-bestanden in SharePoint ---------- */
 const CONFIG = {
   clientId: "04eb336c-94c0-4933-b685-b9c2114fbefe",                       // Application (client) ID van de Azure-app "Optimus Facturatie"
@@ -1184,7 +1206,7 @@ async function ensureFolder(driveId, path){
   }
   return parent;
 }
-const DATA_FILE = /^(klanten|teksten|verkopen|instellingen|facturen-\d{4})\.json$/;
+const DATA_FILE = /^(klanten|teksten|verkopen|paarden|instellingen|facturen-\d{4})\.json$/;
 async function listData(){
   let url = `/drives/${loc.driveId}/items/${loc.folderId}/children?$top=200`, out = [];
   while (url) { const j = await gjson(url); out = out.concat(j.value || []); url = j["@odata.nextLink"] || null; }
@@ -1246,6 +1268,7 @@ function rebuildState(){
   state.klanten = listOf("klanten.json");
   state.teksten = listOf("teksten.json");
   state.verkopen = listOf("verkopen.json");
+  state.paarden = listOf("paarden.json");
   const inst = files["instellingen.json"]?.data || {};
   state.bedrijf = inst.bedrijf || {};
   state.nummering = inst.nummering || {laatste:{}};
@@ -1260,7 +1283,10 @@ const ops = {
   updateTekst: (id, patch) => mutate("teksten.json", d => { const it = itemsOf(d); if (it[id]) Object.assign(it[id], patch); }),
   deleteTekst: id => mutate("teksten.json", d => { delete itemsOf(d)[id]; }),
   updateVerkoop: (id, patch) => mutate("verkopen.json", d => { const it = itemsOf(d); if (it[id]) Object.assign(it[id], patch); }),
-  saveInst: (section, v) => mutate("instellingen.json", d => { d[section] = v; })
+  saveInst: (section, v) => mutate("instellingen.json", d => { d[section] = v; }),
+  savePaard: (id, v) => mutate("paarden.json", d => { itemsOf(d)[id] = v; }),
+  updatePaard: (id, patch) => mutate("paarden.json", d => { const it = itemsOf(d); if (it[id]) Object.assign(it[id], patch); }),
+  deletePaard: id => mutate("paarden.json", d => { delete itemsOf(d)[id]; })
 };
 const fFile = jaar => `facturen-${jaar}.json`;
 function seqConflict(items, p, exceptId){
@@ -1340,7 +1366,7 @@ function backupJson(){
 /* Historiek importeren: voegt toe, overschrijft nooit bestaande facturen of klantgegevens */
 const kkey = s => norm(String(s || "").replace(/^CN\s+/i, ""));
 async function importHistoriek(data){
-  if (!data || data.type !== "optimus-historiek") throw new Error("dit is geen historiekbestand");
+  if (!data || !["optimus-historiek", "optimus-paarden"].includes(data.type)) throw new Error("dit is geen importbestand van Optimus Facturatie");
   const idMap = {};
   let nk = 0;
   if (data.klanten) await mutate("klanten.json", d => {
@@ -1365,7 +1391,16 @@ async function importHistoriek(data){
     });
     nf += r.added; skip += r.skipped;
   }
-  return {nk, nf, skip};
+  let np = 0;
+  if (data.paarden) await mutate("paarden.json", d => {
+    np = 0; const it = itemsOf(d);
+    for (const [id, p] of Object.entries(data.paarden)) {
+      const ex = Object.entries(it).find(([, v]) => (p.chip && v.chip && v.chip === p.chip) || (p.naam && kkey(v.naam) === kkey(p.naam)));
+      if (ex) { for (const f of ["naam", "chip", "geboortedatum", "geslacht", "moeder", "vader"]) if (!ex[1][f] && p[f]) ex[1][f] = p[f]; }
+      else { it[it[id] ? newId() : id] = p; np++; }
+    }
+  });
+  return {nk, nf, skip, np};
 }
 async function openPad(f){
   const w = window.open("", "_blank");
@@ -1396,6 +1431,49 @@ function nextSeq(year){
 function expectedNumber(iso){ if (!iso) return null; const y = Number(iso.slice(0, 4)); return {y, w:isoWeek(iso), s:nextSeq(y)}; }
 const nrString = o => `${o.y}${pad(o.w, 2)}${pad(o.s, 3)}`;
 
+/* ---------- paarden op factuur ---------- */
+SOORT.paard = {EN:"Horse", NL:"Paard", FR:"Cheval"};
+const HDESC = {
+  EN: p => [p.chip ? `Microchip No.: ${p.chip}` : "", p.geboortedatum ? `Date of birth: ${fmtDate(p.geboortedatum)}` : ""],
+  NL: p => [p.chip ? `Chipnummer: ${p.chip}` : "", p.geboortedatum ? `Geboortedatum: ${fmtDate(p.geboortedatum)}` : ""],
+  FR: p => [p.chip ? `N° de puce : ${p.chip}` : "", p.geboortedatum ? `Date de naissance : ${fmtDate(p.geboortedatum)}` : ""]
+};
+function horseType(p, iso){
+  if (p.soort && SOORT[p.soort]) return p.soort;
+  const by = Number(String(p.geboortedatum || "").slice(0, 4)), iy = Number(String(iso || todayISO()).slice(0, 4));
+  return !by ? "paard" : by >= iy ? "veulen" : by === iy - 1 ? "jaarling" : "paard";
+}
+function horseFill(r, p, taal, typeKey){
+  const t = SOORT[typeKey || horseType(p, draft.datum)] || SOORT.paard;
+  r.titel = `${t[taal] || t.EN}: ${p.naam || ""}`.trim();
+  r.omschrijving = (HDESC[taal] || HDESC.EN)(p).filter(Boolean).join("\n");
+  r.paardId = p.id; r.paardType = typeKey || null; r.paardAuto = true;
+  return r;
+}
+function refreshHorseLines(){
+  for (const r of draft.regels) { if (!r.paardId || !r.paardAuto) continue; const p = state.paarden.find(x => x.id === r.paardId); if (p) horseFill(r, p, draft.taal, r.paardType); }
+}
+const horseByName = name => state.paarden.find(p => p.naam && norm(p.naam) === norm(name));
+function pickHorse(onPick){
+  let q = "", idx = 0, list = [];
+  dialog.innerHTML = `<h3>Paard of veulen kiezen</h3><input id="hp-q" type="text" placeholder="Zoek op naam, chipnummer, moeder of vader" autocomplete="off"><ul class="hlist" id="hp-list" role="listbox"></ul>
+    <div class="foot"><button class="btn ghost" id="hp-new">+ Nieuw paard</button><button class="btn ghost" id="hp-cancel">Annuleren</button></div>`;
+  const paint = () => {
+    const nq = norm(q);
+    list = [...state.paarden].filter(p => !nq || norm(`${p.naam} ${p.chip} ${p.moeder} ${p.vader}`).includes(nq))
+      .sort((a, b) => (!!a.factuur - !!b.factuur) || String(a.naam).localeCompare(String(b.naam))).slice(0, 60);
+    idx = Math.min(idx, Math.max(0, list.length - 1));
+    $("#hp-list").innerHTML = list.length ? list.map((p, i) => `<li role="option" data-i="${i}" aria-selected="${i === idx}"><span><b>${esc(p.naam || "(nog geen naam)")}</b><br><small>${esc([p.geslacht, p.geboortedatum ? fmtDate(p.geboortedatum) : "", [p.moeder, p.vader].filter(Boolean).join(" x ")].filter(Boolean).join(" · "))}</small></span><small style="text-align:right">${esc(p.chip || "geen chipnummer")}${p.factuur ? `<br>gefactureerd ${esc(p.factuur)}` : ""}</small></li>`).join("") : `<li style="cursor:default"><small>Geen paarden gevonden.</small></li>`;
+  };
+  modalDone = null; modal.hidden = false; paint(); setTimeout(() => $("#hp-q")?.focus(), 20);
+  const choose = i => { const p = list[i]; if (!p) return; closeModal(true); onPick(p); };
+  $("#hp-q").addEventListener("input", e => { q = e.target.value; idx = 0; paint(); });
+  $("#hp-q").addEventListener("keydown", e => { if (e.key === "ArrowDown") { idx = Math.min(list.length - 1, idx + 1); paint(); e.preventDefault(); } if (e.key === "ArrowUp") { idx = Math.max(0, idx - 1); paint(); e.preventDefault(); } if (e.key === "Enter") { e.preventDefault(); choose(idx); } });
+  $("#hp-list").addEventListener("click", e => { const li = e.target.closest("li[data-i]"); if (li) choose(+li.dataset.i); });
+  $("#hp-cancel").addEventListener("click", () => closeModal(undefined));
+  $("#hp-new").addEventListener("click", () => { closeModal(undefined); openPaardModal(null, {naam:q}, p => onPick(p)); });
+}
+
 /* ---------- standaardteksten ---------- */
 function resolveTekst(t, taal, klant){
   let s = t[taal], fallback = false;
@@ -1404,7 +1482,7 @@ function resolveTekst(t, taal, klant){
   return {s, fallback};
 }
 function currentKlant(){ const k = klantById(draft.klantId); return k ? snapKlant(k) : (draft.klantSnap || null); }
-function refreshTexts(){
+function refreshTextsBase(){
   const k = currentKlant();
   for (const e of draft.teksten) { if (!e.tekstId || e.bewerkt) continue; const t = state.teksten.find(x => x.id === e.tekstId); if (!t) continue; const r = resolveTekst(t, draft.taal, k); e.tekst = r.s; e.fallback = r.fallback; }
 }
@@ -1415,11 +1493,12 @@ function addAutoTexts(){
 const sortedTeksten = () => [...state.teksten].sort((a, b) => (a.volgorde ?? 0) - (b.volgorde ?? 0) || String(a.titel).localeCompare(String(b.titel)));
 
 /* ---------- invoice editor ---------- */
+function refreshTexts(){ refreshTextsBase(); refreshHorseLines(); }
 function draftToInvoice(){
   const k = currentKlant() || {};
   return {
     taal: draft.taal, datum: draft.datum, klantId: draft.klantId || null, klant: k,
-    regels: draft.regels.filter(r => r.titel.trim() || r.omschrijving.trim() || typeof r.prijs === "number").map(r => ({titel:r.titel.trim(), omschrijving:r.omschrijving.replace(/\s+$/, ""), prijs:typeof r.prijs === "number" ? r.prijs : null, btw:Number(r.btw) || 0})),
+    regels: draft.regels.filter(r => r.titel.trim() || r.omschrijving.trim() || typeof r.prijs === "number").map(r => ({titel:r.titel.trim(), omschrijving:r.omschrijving.replace(/\s+$/, ""), prijs:typeof r.prijs === "number" ? r.prijs : null, btw:Number(r.btw) || 0, ...(r.paardId ? {paardId:r.paardId} : {})})),
     teksten: draft.teksten.map(t => t.tekst.replace(/\s+$/, "")).filter(s => s.trim()),
     bedrijf: draft.editId ? (draft.bedrijfSnap || bedrijf()) : bedrijf(),
     verkoopId: draft.verkoopId || null
@@ -1483,6 +1562,7 @@ function renderLines(){
     d.innerHTML = `
       <div class="line-head"><span class="line-no">${i + 1}</span>
         <input type="text" class="l-titel" id="l-titel-${i}" aria-label="Goed of prestatie ${i + 1}" placeholder="Bv. Foal: Desiree Optima" value="${esc(r.titel)}">
+        <button class="btn ghost sm" data-act="horse" title="Paard of veulen kiezen voor deze regel">Paard</button>
         <button class="icon-btn" data-act="up" title="Omhoog" aria-label="Regel omhoog" ${i === 0 ? "disabled" : ""}>↑</button>
         <button class="icon-btn" data-act="down" title="Omlaag" aria-label="Regel omlaag" ${i === draft.regels.length - 1 ? "disabled" : ""}>↓</button>
         <button class="icon-btn del" data-act="del" title="Verwijderen" aria-label="Regel verwijderen">✕</button></div>
@@ -1502,7 +1582,7 @@ function renderTexts(){
     const d = document.createElement("div"); d.className = "text-item"; d.dataset.i = i;
     const lines = (e.tekst.match(/\n/g) || []).length + 1;
     d.innerHTML = `<div style="flex:1;min-width:0"><textarea class="t-tekst" id="t-tekst-${i}" rows="${Math.max(1, lines)}" aria-label="Extra beschrijving ${i + 1}">${esc(e.tekst)}</textarea>
-      <div class="src">${t ? `Standaardtekst: ${esc(t.titel || "")}${e.bewerkt ? " · aangepast voor deze factuur" : ""}${e.fallback ? ` · <span style="color:var(--warn)">geen ${draft.taal}-versie, andere taal gebruikt</span>` : ""}` : "Eigen tekst"}</div></div>
+      <div class="src">${t ? `Standaardtekst: ${esc(t.titel || "")}${e.bewerkt ? " · aangepast voor deze factuur" : ""}${e.fallback ? ` · <span style="color:var(--warn)">geen ${draft.taal}-versie, andere taal gebruikt</span>` : ""}` : "Eigen tekst"} <button class="btn ghost sm" data-act="tsave" style="padding:0 4px" ${t && !e.bewerkt ? "hidden" : ""}>· Bewaar als standaardtekst</button></div></div>
       <button class="icon-btn del" data-act="tdel" aria-label="Tekst verwijderen" title="Verwijderen">✕</button>`;
     host.appendChild(d);
   });
@@ -1556,8 +1636,8 @@ function showErrors(errs){
 /* events: lines + texts */
 $("#lines").addEventListener("input", e => {
   const box = e.target.closest(".line"); if (!box) return; const r = draft.regels[+box.dataset.i];
-  if (e.target.classList.contains("l-titel")) r.titel = e.target.value;
-  if (e.target.classList.contains("l-omschr")) { r.omschrijving = e.target.value; e.target.rows = Math.max(2, (r.omschrijving.match(/\n/g) || []).length + 1); }
+  if (e.target.classList.contains("l-titel")) { r.titel = e.target.value; r.paardAuto = false; }
+  if (e.target.classList.contains("l-omschr")) { r.omschrijving = e.target.value; r.paardAuto = false; e.target.rows = Math.max(2, (r.omschrijving.match(/\n/g) || []).length + 1); }
   if (e.target.classList.contains("l-prijs")) { r.prijsTxt = e.target.value; r.prijs = parseAmount(r.prijsTxt); }
   scheduleUpdate();
 });
@@ -1568,17 +1648,40 @@ $("#lines").addEventListener("change", e => {
 });
 $("#lines").addEventListener("click", e => {
   const b = e.target.closest("button[data-act]"); if (!b) return; const i = +b.closest(".line").dataset.i;
+  if (b.dataset.act === "horse") { pickHorse(p => { horseFill(draft.regels[i], p, draft.taal); renderLines(); scheduleUpdate(); $(`#l-prijs-${i}`)?.focus(); }); return; }
   if (b.dataset.act === "del") { draft.regels.splice(i, 1); if (!draft.regels.length) draft.regels.push(blankLine()); }
   if (b.dataset.act === "up" && i > 0) [draft.regels[i - 1], draft.regels[i]] = [draft.regels[i], draft.regels[i - 1]];
   if (b.dataset.act === "down" && i < draft.regels.length - 1) [draft.regels[i + 1], draft.regels[i]] = [draft.regels[i], draft.regels[i + 1]];
   renderLines(); scheduleUpdate();
 });
+$("#addHorse").addEventListener("click", () => pickHorse(p => {
+  const last = draft.regels[draft.regels.length - 1];
+  const empty = last && !last.titel.trim() && !last.omschrijving.trim() && !last.prijsTxt;
+  const r = empty ? last : blankLine(); if (!empty) draft.regels.push(r);
+  horseFill(r, p, draft.taal); renderLines(); scheduleUpdate(); $(`#l-prijs-${draft.regels.indexOf(r)}`)?.focus();
+}));
 $("#addLine").addEventListener("click", () => { draft.regels.push(blankLine()); renderLines(); scheduleUpdate(); $(`#l-titel-${draft.regels.length - 1}`)?.focus(); });
 $("#texts").addEventListener("input", e => {
   const it = e.target.closest(".text-item"); if (!it) return; const en = draft.teksten[+it.dataset.i];
-  en.tekst = e.target.value; if (en.tekstId) en.bewerkt = true; e.target.rows = Math.max(1, (en.tekst.match(/\n/g) || []).length + 1); scheduleUpdate();
+  en.tekst = e.target.value; if (en.tekstId) en.bewerkt = true; const sb = it.querySelector("[data-act=tsave]"); if (sb) sb.hidden = false; e.target.rows = Math.max(1, (en.tekst.match(/\n/g) || []).length + 1); scheduleUpdate();
 });
-$("#texts").addEventListener("click", e => { const b = e.target.closest("[data-act=tdel]"); if (!b) return; draft.teksten.splice(+b.closest(".text-item").dataset.i, 1); renderTexts(); scheduleUpdate(); });
+$("#texts").addEventListener("click", async e => {
+  const sv = e.target.closest("[data-act=tsave]");
+  if (sv) {
+    const en = draft.teksten[+sv.closest(".text-item").dataset.i]; if (!en || !online) return toast("Niet verbonden met SharePoint.");
+    if (!en.tekst.trim()) return toast("Typ eerst de tekst die je wilt bewaren.");
+    const titel = await askText("Bewaren als standaardtekst", "Titel (alleen voor jou)", en.tekst.split("\n")[0].slice(0, 50), "Bewaren");
+    if (!titel) return;
+    const id = newId();
+    try {
+      await ops.saveTekst(id, {titel, NL:"", FR:"", EN:"", [draft.taal]:en.tekst, auto:false, volgorde:Date.now()});
+      en.tekstId = id; en.bewerkt = false; renderTexts(); renderTextSelect(); saveDraft();
+      toast(`Bewaard als standaardtekst (${draft.taal}). De andere talen vul je aan bij Standaardteksten.`, 6000);
+    } catch (err) { toast("Bewaren is niet gelukt: " + err.message); }
+    return;
+  }
+  const b = e.target.closest("[data-act=tdel]"); if (!b) return; draft.teksten.splice(+b.closest(".text-item").dataset.i, 1); renderTexts(); scheduleUpdate();
+});
 $("#tekstKies").addEventListener("change", e => {
   const id = e.target.value; e.target.value = ""; if (!id) return;
   draft.teksten.push({tekstId:id, tekst:"", bewerkt:false}); refreshTexts(); renderTexts(); scheduleUpdate();
@@ -1586,7 +1689,7 @@ $("#tekstKies").addEventListener("change", e => {
 $("#addOwnText").addEventListener("click", () => { draft.teksten.push({tekstId:null, tekst:"", bewerkt:true}); renderTexts(); scheduleUpdate(); $(`#t-tekst-${draft.teksten.length - 1}`)?.focus(); });
 $("#datum").addEventListener("input", e => { draft.datum = e.target.value; scheduleUpdate(); });
 $("#nrManual").addEventListener("input", e => { draft.nrManual = e.target.value; scheduleUpdate(); });
-$("#taalSeg").addEventListener("click", e => { const b = e.target.closest("button[data-taal]"); if (!b) return; draft.taal = b.dataset.taal; refreshTexts(); renderTexts(); renderMeta(); scheduleUpdate(); });
+$("#taalSeg").addEventListener("click", e => { const b = e.target.closest("button[data-taal]"); if (!b) return; draft.taal = b.dataset.taal; refreshTexts(); renderTexts(); renderLines(); renderMeta(); scheduleUpdate(); });
 
 /* customer combobox */
 let comboItems = [], comboIdx = -1;
@@ -1655,6 +1758,7 @@ async function createOrSave(){
     } else {
       saved = info.manual ? await createManual(inv, info.p) : await createAuto(inv);
       if (inv.verkoopId) ops.updateVerkoop(inv.verkoopId, {status:"gefactureerd", factuur:saved.nummer}).catch(() => {});
+      for (const r of inv.regels) if (r.paardId) ops.updatePaard(r.paardId, {factuur:saved.nummer, klant:saved.klant?.naam || "", gefactureerdOp:saved.datum}).catch(() => {});
       toast(`Factuur ${saved.nummer} aangemaakt`);
     }
     lastCreated = saved;
@@ -1705,6 +1809,8 @@ function lineFromSale(v, taal){
   const key = norm(v.soort).replace(/[^a-z]/g, "");
   const s = SOORT[key] || (key.includes("draagmerrie") ? SOORT.draagmerrie : null);
   const titel = s ? `${s[taal] || s.EN}: ${v.paard || ""}`.trim() : [v.soort, v.paard].filter(Boolean).join(": ");
+  const horse = v.paard ? horseByName(v.paard) : null;
+  if (horse) return {...horseFill(blankLine(), horse, taal, s ? Object.keys(SOORT).find(k => SOORT[k] === s) : null), prijs: typeof v.bedrag === "number" ? v.bedrag : null, prijsTxt: typeof v.bedrag === "number" ? eur(v.bedrag) : ""};
   return {...blankLine(), titel, prijs: typeof v.bedrag === "number" ? v.bedrag : null, prijsTxt: typeof v.bedrag === "number" ? eur(v.bedrag) : ""};
 }
 function startFromSale(v){
@@ -1762,7 +1868,7 @@ $("#fBody").addEventListener("click", async e => {
     const k = f.klantId ? klantById(f.klantId) : null;
     draft = blankDraft();
     draft.klantId = k ? k.id : null; draft.klantSnap = f.klant || null; draft.taal = f.taal || "EN";
-    draft.regels = (f.historiek ? [{titel:f.omschrijving || "", omschrijving:"", prijs:typeof f.netto === "number" ? f.netto : null, btw:Number(state.instellingen.standaardBtw ?? 21)}] : (f.regels || [])).map(r => ({titel:r.titel || "", omschrijving:r.omschrijving || "", prijs:r.prijs, prijsTxt:typeof r.prijs === "number" ? eur(r.prijs) : "", btw:r.btw}));
+    draft.regels = (f.historiek ? [{titel:f.omschrijving || "", omschrijving:"", prijs:typeof f.netto === "number" ? f.netto : null, btw:Number(state.instellingen.standaardBtw ?? 21)}] : (f.regels || [])).map(r => ({titel:r.titel || "", omschrijving:r.omschrijving || "", prijs:r.prijs, prijsTxt:typeof r.prijs === "number" ? eur(r.prijs) : "", btw:r.btw, ...(r.paardId ? {paardId:r.paardId, paardAuto:false} : {})}));
     if (!draft.regels.length) draft.regels = [blankLine()];
     draft.teksten = (f.teksten || []).map(s => ({tekstId:null, tekst:s, bewerkt:true}));
     if (b.dataset.act === "edit") { draft.editId = f.id; draft.nummer = f.nummer; draft.nrManual = f.nummer; draft.datum = f.datum; draft.bedrijfSnap = f.bedrijf || null; draft.verkoopId = f.verkoopId || null; }
@@ -1822,6 +1928,16 @@ let modalDone = null;
 function closeModal(v){ modal.hidden = true; dialog.innerHTML = ""; const f = modalDone; modalDone = null; if (f) f(v); }
 modal.addEventListener("mousedown", e => { if (e.target === modal) closeModal(undefined); });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !modal.hidden) closeModal(undefined); });
+function askText(title, label, value, ok = "OK"){
+  return new Promise(res => {
+    dialog.innerHTML = `<h3>${esc(title)}</h3><label class="field"><span>${esc(label)}</span><input id="ask-v" type="text" value="${esc(value || "")}"></label><div class="foot"><button class="btn ghost" data-v="0">Annuleren</button><button class="btn primary" data-v="1">${esc(ok)}</button></div>`;
+    modalDone = v => res(v === true ? ($("#ask-v")?.value || "").trim() || null : null);
+    const done = v => { const val = ($("#ask-v")?.value || "").trim(); modalDone = null; modal.hidden = true; dialog.innerHTML = ""; res(v && val ? val : null); };
+    dialog.querySelectorAll("[data-v]").forEach(b => b.addEventListener("click", () => done(b.dataset.v === "1")));
+    $("#ask-v").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); done(true); } });
+    modal.hidden = false; setTimeout(() => { $("#ask-v").focus(); $("#ask-v").select(); }, 20);
+  });
+}
 function confirmBox(title, text, ok = "OK", danger = false){
   return new Promise(res => {
     dialog.innerHTML = `<h3>${esc(title)}</h3><p style="margin:0;color:var(--muted)">${esc(text)}</p><div class="foot"><button class="btn ghost" data-v="0">Annuleren</button><button class="btn ${danger ? "danger" : "primary"}" data-v="1">${esc(ok)}</button></div>`;
@@ -1868,6 +1984,60 @@ function openKlantModal(k, prefill, onSaved, onCancel){
   };
   $("#k-save").addEventListener("click", save); $("#kForm").addEventListener("submit", save);
 }
+
+/* ---------- paarden tab ---------- */
+function renderPaarden(){
+  const q = norm($("#pZoek").value);
+  const list = [...state.paarden].filter(p => !q || norm(`${p.naam} ${p.chip} ${p.moeder} ${p.vader} ${p.koper}`).includes(q))
+    .sort((a, b) => String(b.geboortedatum || "").localeCompare(String(a.geboortedatum || "")) || String(a.naam).localeCompare(String(b.naam)));
+  $("#pBody").innerHTML = list.map(p => `<tr data-id="${esc(p.id)}"><td><b>${esc(p.naam || "(nog geen naam)")}</b><div class="sub">${esc([p.geslacht, p.soort ? (SOORT[p.soort]?.NL || p.soort) : ""].filter(Boolean).join(" · "))}</div></td>
+    <td>${esc(p.geboortedatum ? fmtDate(p.geboortedatum) : "")}</td><td>${esc(p.chip || "")}${p.chip && p.chip.length !== 15 ? `<div class="sub" style="color:var(--warn)">controleer: ${p.chip.length} cijfers</div>` : ""}</td>
+    <td>${esc([p.moeder, p.vader].filter(Boolean).join(" x "))}</td>
+    <td>${p.factuur ? `<span class="nr">${esc(p.factuur)}</span><div class="sub">${esc(p.klant || "")}</div>` : (p.koper ? `<div class="sub">koper: ${esc(p.koper)}</div>` : "")}</td>
+    <td class="acts"><button class="btn sm" data-act="edit">Wijzigen</button> <button class="btn sm ghost danger" data-act="del">Verwijderen</button></td></tr>`).join("");
+  $("#pEmpty").hidden = !!list.length;
+  $("#pSum").textContent = state.paarden.length ? `${state.paarden.length} paarden` : "";
+}
+function openPaardModal(p, prefill, onSaved){
+  const v = {naam:"", chip:"", geboortedatum:"", geslacht:"", soort:"", moeder:"", vader:"", notitie:"", ...(p || {}), ...(prefill || {})};
+  dialog.innerHTML = `<h3>${p ? "Paard wijzigen" : "Nieuw paard"}</h3>
+    <form id="pForm" class="grid" novalidate>
+      <label class="field wide"><span>Naam *</span><input id="p-naam" type="text" value="${esc(v.naam)}"></label>
+      <label class="field"><span>Chipnummer</span><input id="p-chip" type="text" inputmode="numeric" value="${esc(v.chip)}"></label>
+      <label class="field"><span>Geboortedatum</span><input id="p-geboortedatum" type="date" value="${esc(v.geboortedatum)}"></label>
+      <label class="field"><span>Geslacht</span><select id="p-geslacht">${["", "merrie", "hengst", "ruin"].map(g => `<option value="${g}" ${v.geslacht === g ? "selected" : ""}>${g || "–"}</option>`).join("")}</select></label>
+      <label class="field"><span>Soort op de factuur</span><select id="p-soort">${[["", "Automatisch (volgens leeftijd)"], ["veulen", "Veulen"], ["jaarling", "Jaarling"], ["paard", "Paard"], ["sportpaard", "Sportpaard"], ["fokmerrie", "Fokmerrie"]].map(([k, l]) => `<option value="${k}" ${v.soort === k ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label class="field"><span>Moeder</span><input id="p-moeder" type="text" value="${esc(v.moeder)}"></label>
+      <label class="field"><span>Vader</span><input id="p-vader" type="text" value="${esc(v.vader)}"></label>
+      <label class="field wide"><span>Notitie</span><input id="p-notitie" type="text" value="${esc(v.notitie)}"></label>
+      <div class="wide hint" id="p-err" style="color:var(--danger)"></div>
+    </form>
+    <div class="foot"><button class="btn ghost" id="p-cancel">Annuleren</button><button class="btn primary" id="p-save">Opslaan</button></div>`;
+  modalDone = null; modal.hidden = false; setTimeout(() => $("#p-naam")?.focus(), 20);
+  $("#p-cancel").addEventListener("click", () => closeModal(undefined));
+  const save = async ev => {
+    ev?.preventDefault();
+    const d = {}; ["naam", "chip", "geboortedatum", "geslacht", "soort", "moeder", "vader", "notitie"].forEach(f => d[f] = ($("#p-" + f).value || "").trim());
+    d.chip = d.chip.replace(/\s+/g, "");
+    if (!d.naam) { $("#p-err").textContent = "Vul de naam in."; return; }
+    if (!online) { $("#p-err").textContent = "Niet verbonden met SharePoint."; return; }
+    $("#p-save").disabled = true;
+    try {
+      const id = p?.id || newId(); const {id:_x, ...prev} = p || {};
+      await ops.savePaard(id, {...prev, ...d}); closeModal(true); toast(p ? "Paard bijgewerkt" : "Paard opgeslagen");
+      if (onSaved) onSaved({id, ...prev, ...d});
+    } catch (e) { $("#p-err").textContent = "Opslaan is niet gelukt: " + e.message; $("#p-save").disabled = false; }
+  };
+  $("#p-save").addEventListener("click", save); $("#pForm").addEventListener("submit", save);
+}
+$("#pZoek").addEventListener("input", renderPaarden);
+$("#pNew").addEventListener("click", () => openPaardModal(null, {}));
+$("#pBody").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const p = state.paarden.find(x => x.id === b.closest("tr").dataset.id); if (!p) return;
+  if (b.dataset.act === "edit") openPaardModal(p);
+  if (b.dataset.act === "del" && await confirmBox(`${p.naam || "Dit paard"} verwijderen?`, "Facturen waarop dit paard staat, blijven ongewijzigd.", "Verwijderen", true)) ops.deletePaard(p.id).catch(err => toast("Verwijderen is niet gelukt: " + err.message));
+});
 
 /* ---------- standaardteksten tab ---------- */
 function renderTeksten(){
@@ -1953,7 +2123,8 @@ function rerenderData(){
   if (autoPending && state.teksten.length && !draftIsDirty()) { addAutoTexts(); autoPending = false; }
   renderQueue(); renderTextSelect(); refreshTexts();
   if (!document.activeElement?.closest?.("#texts")) renderTexts();
-  renderKlantBox(); renderFacturen(); renderKlanten(); renderTeksten(); renderInstellingen(); scheduleUpdate();
+  if (!document.activeElement?.closest?.("#lines")) { refreshHorseLines(); renderLines(); }
+  renderKlantBox(); renderFacturen(); renderKlanten(); renderPaarden(); renderTeksten(); renderInstellingen(); scheduleUpdate();
 }
 const BASE_URL = location.origin + location.pathname.replace(/[^/]*$/, "");
 function showGate(text, canLogin, err){
@@ -2042,9 +2213,9 @@ $("#histBtn").addEventListener("click", () => { if (!online) return toast("Niet 
 $("#histFile").addEventListener("change", async e => {
   const file = e.target.files?.[0]; if (!file) return;
   const b = $("#histBtn"); b.disabled = true; b.textContent = "Bezig met importeren…";
-  try { const r = await importHistoriek(JSON.parse(await file.text())); toast(`${r.nf} facturen en ${r.nk} klanten toegevoegd${r.skip ? `, ${r.skip} facturen stonden er al` : ""}.`, 7000); }
+  try { const r = await importHistoriek(JSON.parse(await file.text())); const parts = []; if (r.nf) parts.push(`${r.nf} facturen`); if (r.nk) parts.push(`${r.nk} klanten`); if (r.np) parts.push(`${r.np} paarden`); toast(`${parts.length ? parts.join(", ") + " toegevoegd" : "Niets nieuws toegevoegd"}${r.skip ? ` (${r.skip} facturen stonden er al)` : ""}.`, 7000); }
   catch (err) { toast("Importeren niet gelukt: " + err.message, 7000); }
-  finally { b.disabled = false; b.textContent = "Historiek importeren (JSON)"; }
+  finally { b.disabled = false; b.textContent = "Gegevens importeren (JSON)"; }
 });
 boot();
 })();
