@@ -1113,11 +1113,11 @@ function installPreviewFonts(){
 const state = {klanten:[], facturen:[], teksten:[], verkopen:[], bedrijf:{}, nummering:{laatste:{}}, instellingen:{standaardBtw:21}, loaded:false};
 /* ---------- Microsoft 365: login (MSAL) + opslag als JSON-bestanden in SharePoint ---------- */
 const CONFIG = {
-  clientId: "__CLIENT_ID__",                       // Application (client) ID van de Azure-app "Optimus Facturatie"
+  clientId: "04eb336c-94c0-4933-b685-b9c2114fbefe",                       // Application (client) ID van de Azure-app "Optimus Facturatie"
   tenantId: "c1252faa-93c9-4ec9-8dd2-f3298292fcb6", // DSF-tenant
   siteName: "dsf-company",                         // SharePoint-site (weergavenaam)
   siteUrl: "",                                     // optioneel, gaat voor op siteName: https://<tenant>.sharepoint.com/sites/<site>
-  folderPath: "A OPTIMUS/Facturatie"               // map in de documentbibliotheek van die site
+  folderPath: "A OPTIMUS/WEBAPP FACTURATIE"               // map in de documentbibliotheek van die site
 };
 const SCOPES = ["User.Read", "Sites.ReadWrite.All"];
 const GRAPH = "https://graph.microsoft.com/v1.0";
@@ -1912,6 +1912,7 @@ function rerenderData(){
   if (!document.activeElement?.closest?.("#texts")) renderTexts();
   renderKlantBox(); renderFacturen(); renderKlanten(); renderTeksten(); renderInstellingen(); scheduleUpdate();
 }
+const BASE_URL = location.origin + location.pathname.replace(/[^/]*$/, "");
 function showGate(text, canLogin, err){
   $("#gate").hidden = false; $("#gateLogo").src = LOGO;
   if (text) $("#gateText").textContent = text;
@@ -1922,7 +1923,7 @@ function loginErrorText(e){
   const m = String(e?.errorMessage || e?.message || e || "");
   if (/AADSTS50105/.test(m)) return "Je account heeft (nog) geen toegang tot Optimus Facturatie. Vraag Rik om je toe te voegen.";
   if (/AADSTS65001|consent/i.test(m)) return "Een beheerder moet eerst toestemming geven voor de app (admin consent in Azure).";
-  if (/AADSTS50011/.test(m)) return "Dit webadres staat niet als redirect-URI in de Azure-app. Voeg " + location.origin + "/ toe.";
+  if (/AADSTS50011/.test(m)) return "Dit webadres staat niet als redirect-URI in de Azure-app. Voeg " + BASE_URL + " toe.";
   if (/AADSTS700016/.test(m)) return "De client-ID van de app klopt niet of de app bestaat niet in deze tenant.";
   return "Aanmelden is niet gelukt: " + m;
 }
@@ -1941,7 +1942,7 @@ function startPolling(){
   window.addEventListener("focus", tick);
 }
 $("#loginBtn").addEventListener("click", () => msalApp?.loginRedirect({scopes:SCOPES, prompt:"select_account"}).catch(e => showGate(null, true, loginErrorText(e))));
-$("#logoutBtn").addEventListener("click", () => msalApp?.logoutRedirect({account, postLogoutRedirectUri:location.origin + "/"}));
+$("#logoutBtn").addEventListener("click", () => msalApp?.logoutRedirect({account, postLogoutRedirectUri:BASE_URL}));
 $("#seedBtn").addEventListener("click", () => { $("#seedFile").value = ""; $("#seedFile").click(); });
 $("#seedFile").addEventListener("change", async e => {
   const file = e.target.files?.[0]; if (!file) return;
@@ -1963,11 +1964,11 @@ async function boot(){
   else {
     if (!configured()) { showGate("De app is nog niet gekoppeld aan Microsoft 365: de client-ID ontbreekt in index.html.", false); return; }
     if (!window.msal) { showGate("De aanmeldmodule kon niet laden. Herlaad de pagina.", false); return; }
-    msalApp = new msal.PublicClientApplication({
-      auth:{clientId:CONFIG.clientId, authority:`https://login.microsoftonline.com/${CONFIG.tenantId}`, redirectUri:location.origin + "/", postLogoutRedirectUri:location.origin + "/"},
+    try { msalApp = new msal.PublicClientApplication({
+      auth:{clientId:CONFIG.clientId, authority:`https://login.microsoftonline.com/${CONFIG.tenantId}`, redirectUri:BASE_URL, postLogoutRedirectUri:BASE_URL},
       cache:{cacheLocation:"localStorage"}
     });
-    await msalApp.initialize();
+    await msalApp.initialize(); } catch (e) { console.error(e); showGate(null, false, "Aanmelden kon niet starten: " + (e?.message || e)); return; }
     let resp = null;
     try { resp = await msalApp.handleRedirectPromise(); } catch (e) { console.error(e); showGate(null, true, loginErrorText(e)); return; }
     account = resp?.account || msalApp.getActiveAccount() || msalApp.getAllAccounts()[0] || null;
