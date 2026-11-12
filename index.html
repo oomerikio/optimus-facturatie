@@ -399,7 +399,7 @@ a.btn{text-decoration:none}
         <div class="card-h"><h2>Opslag</h2></div>
         <p style="margin:0" id="locText">Niet verbonden.</p>
         <p class="hint" style="margin:0">Elke wijziging komt als JSON-bestand in deze SharePoint-map, PDF's in de submap PDF. SharePoint bewaart van elk bestand de vorige versies.</p>
-        <div><button class="btn" id="backupBtn">Back-up downloaden (JSON)</button></div>
+        <div class="row" style="gap:8px"><button class="btn" id="backupBtn">Back-up downloaden (JSON)</button><button class="btn" id="histBtn">Historiek importeren (JSON)</button><input type="file" id="histFile" accept=".json,application/json" hidden></div>
       </div>
       <div class="card">
         <div class="card-h"><h2>Nummering</h2></div>
@@ -1337,6 +1337,43 @@ function backupJson(){
   for (const [n, f] of Object.entries(files)) out.bestanden[n] = f.data;
   localDownload(`Optimus facturatie back-up ${todayISO()}.json`, new Blob([JSON.stringify(out, null, 1)], {type:"application/json"}));
 }
+/* Historiek importeren: voegt toe, overschrijft nooit bestaande facturen of klantgegevens */
+const kkey = s => norm(String(s || "").replace(/^CN\s+/i, ""));
+async function importHistoriek(data){
+  if (!data || data.type !== "optimus-historiek") throw new Error("dit is geen historiekbestand");
+  const idMap = {};
+  let nk = 0;
+  if (data.klanten) await mutate("klanten.json", d => {
+    nk = 0; const it = itemsOf(d);
+    for (const [id, k] of Object.entries(data.klanten)) {
+      const ex = Object.entries(it).find(([, v]) => kkey(v.naam) === kkey(k.naam) || (k.alias && (kkey(v.naam) === kkey(k.alias) || kkey(v.alias) === kkey(k.alias))));
+      if (ex) { for (const f of ["straat", "plaats", "land", "btw", "alias"]) if (!ex[1][f] && k[f]) ex[1][f] = k[f]; idMap[id] = ex[0]; }
+      else { const nid = it[id] ? newId() : id; it[nid] = k; idMap[id] = nid; nk++; }
+    }
+  });
+  const byYear = {};
+  for (const [id, f] of Object.entries(data.facturen || {})) (byYear[f.jaar] ||= []).push([id, f]);
+  let nf = 0, skip = 0;
+  for (const [jaar, list] of Object.entries(byYear)) {
+    const r = await mutate(fFile(jaar), d => {
+      const it = itemsOf(d); let added = 0, skipped = 0;
+      for (const [id, f] of list) {
+        if (it[id] || (f.volgnr != null && Object.values(it).some(v => Number(v.volgnr) === Number(f.volgnr)))) { skipped++; continue; }
+        it[id] = {...f, klantId: idMap[f.klantId] || f.klantId || null}; added++;
+      }
+      return {added, skipped};
+    });
+    nf += r.added; skip += r.skipped;
+  }
+  return {nk, nf, skip};
+}
+async function openPad(f){
+  const w = window.open("", "_blank");
+  try {
+    const it = await gjson(`/drives/${loc.driveId}/root:/${encPath(f.pdfPad)}`);
+    if (w) { w.opener = null; w.location.href = it.webUrl; } else window.open(it.webUrl, "_blank", "noopener");
+  } catch (e) { if (w) w.close(); toast("PDF niet gevonden in SharePoint: " + e.message, 6000); }
+}
 
 const DRAFT_KEY = "optimus-concept-v1";
 function blankLine(){ return {titel:"", omschrijving:"", prijs:null, prijsTxt:"", btw: Number(state.instellingen.standaardBtw ?? 21)}; }
@@ -1556,7 +1593,7 @@ let comboItems = [], comboIdx = -1;
 const kz = $("#klantZoek"), kList = $("#klantLijst");
 function openCombo(){
   const q = norm(kz.value);
-  const m = [...state.klanten].sort((a, b) => String(a.naam).localeCompare(String(b.naam))).filter(k => !q || norm(`${k.naam} ${k.plaats} ${k.land}`).includes(q)).slice(0, 10);
+  const m = [...state.klanten].sort((a, b) => String(a.naam).localeCompare(String(b.naam))).filter(k => !q || norm(`${k.naam} ${k.alias || ""} ${k.plaats} ${k.land}`).includes(q)).slice(0, 10);
   comboItems = m.map(k => ({k}));
   comboItems.push({nieuw: kz.value.trim()});
   comboIdx = m.length ? 0 : comboItems.length - 1;
@@ -1678,7 +1715,7 @@ function startFromSale(v){
     addAutoTexts(); renderAll(); $("#doneCard").hidden = true;
     $(`#l-omschr-0`)?.focus();
   };
-  const match = state.klanten.find(k => norm(k.naam) === norm(v.klant));
+  const match = state.klanten.find(k => norm(k.naam) === norm(v.klant) || (k.alias && norm(k.alias) === norm(v.klant)));
   if (match) { build(match); return; }
   const lc = LANDCODE[String(v.land || "").trim().toUpperCase()];
   openKlantModal(null, {naam:String(v.klant || "").trim(), land: lc ? lc[0] : (v.land || ""), taal: lc ? lc[1] : "EN"}, k => build(k), () => build(null));
@@ -1694,13 +1731,17 @@ function renderFacturen(){
   const list = filteredFacturen();
   const lastByYear = {}; realFacturen().forEach(f => { if (f.volgnr == null) return; if (!lastByYear[f.jaar] || f.volgnr > lastByYear[f.jaar].volgnr) lastByYear[f.jaar] = f; });
   $("#fBody").innerHTML = list.map(f => {
-    const omschr = (f.regels || []).map(r => r.titel).filter(Boolean).join(" · ");
-    const isLast = lastByYear[f.jaar]?.id === f.id || f.volgnr == null;
-    return `<tr data-id="${esc(f.id)}"><td class="nr">${esc(f.nummer)}</td><td>${esc(fmtDate(f.datum))}</td>
+    const hist = !!f.historiek;
+    const omschr = hist ? (f.omschrijving || "") : (f.regels || []).map(r => r.titel).filter(Boolean).join(" · ");
+    const isLast = !hist && (lastByYear[f.jaar]?.id === f.id || f.volgnr == null);
+    const sub = hist ? [f.betaalstatus, f.peppol, f.notitie].filter(Boolean).join(" · ") : `${f.taal || ""}${(f.teksten || []).length ? " · " + f.teksten.length + " extra tekst" + (f.teksten.length > 1 ? "en" : "") : ""}`;
+    const open = f.pdf?.webUrl ? `<a class="btn sm ghost" href="${esc(f.pdf.webUrl)}" target="_blank" rel="noopener">Openen</a> ` : (f.pdfPad ? `<button class="btn sm ghost" data-act="openpad">Openen</button> ` : "");
+    const acts = hist ? `${open}<button class="btn sm" data-act="copy">Kopiëren</button>` : `${open}<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="copy">Kopiëren</button> <button class="btn sm ghost" data-act="edit">Aanpassen</button>${isLast ? ` <button class="btn sm ghost danger" data-act="del" title="Alleen de laatste factuur van het jaar kan weg">Verwijderen</button>` : ""}`;
+    return `<tr data-id="${esc(f.id)}"><td class="nr">${esc(f.nummer)}${hist ? `<div class="sub">historiek</div>` : ""}</td><td>${esc(fmtDate(f.datum))}</td>
       <td>${esc(f.klant?.naam || "")}<div class="sub">${esc(f.klant?.land || "")}</div></td>
-      <td>${esc(omschr)}<div class="sub">${esc(f.taal || "")}${(f.teksten || []).length ? " · " + (f.teksten.length) + " extra tekst" + (f.teksten.length > 1 ? "en" : "") : ""}</div></td>
-      <td class="num">€ ${eur(f.totaal)}<div class="sub">netto ${eur(f.netto)}</div></td>
-      <td class="acts">${f.pdf?.webUrl ? `<a class="btn sm ghost" href="${esc(f.pdf.webUrl)}" target="_blank" rel="noopener">Openen</a> ` : ""}<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="copy">Kopiëren</button> <button class="btn sm ghost" data-act="edit">Aanpassen</button>${isLast ? ` <button class="btn sm ghost danger" data-act="del" title="Alleen de laatste factuur van het jaar kan weg">Verwijderen</button>` : ""}</td></tr>`;
+      <td>${esc(omschr)}<div class="sub">${esc(sub)}</div></td>
+      <td class="num">€ ${eur(f.totaal ?? f.netto)}${typeof f.netto === "number" ? `<div class="sub">netto ${eur(f.netto)}</div>` : ""}</td>
+      <td class="acts">${acts}</td></tr>`;
   }).join("");
   $("#fEmpty").hidden = !!list.length;
   const tot = list.reduce((s, f) => s + (f.totaal || 0), 0);
@@ -1714,13 +1755,14 @@ $("#fZoek").addEventListener("input", renderFacturen); $("#fJaar").addEventListe
 $("#fBody").addEventListener("click", async e => {
   const b = e.target.closest("button[data-act]"); if (!b) return;
   const f = state.facturen.find(x => x.id === b.closest("tr").dataset.id); if (!f) return;
+  if (b.dataset.act === "openpad") return openPad(f);
   if (b.dataset.act === "pdf") return downloadPdf(f);
   if (b.dataset.act === "copy" || b.dataset.act === "edit") {
     if (draftIsDirty() && !(await confirmBox("Huidige invoer vervangen?", "Op Factuur maken staat nog een factuur in opmaak. Die invoer wordt vervangen.", "Vervangen"))) return;
     const k = f.klantId ? klantById(f.klantId) : null;
     draft = blankDraft();
     draft.klantId = k ? k.id : null; draft.klantSnap = f.klant || null; draft.taal = f.taal || "EN";
-    draft.regels = (f.regels || []).map(r => ({titel:r.titel || "", omschrijving:r.omschrijving || "", prijs:r.prijs, prijsTxt:typeof r.prijs === "number" ? eur(r.prijs) : "", btw:r.btw}));
+    draft.regels = (f.historiek ? [{titel:f.omschrijving || "", omschrijving:"", prijs:typeof f.netto === "number" ? f.netto : null, btw:Number(state.instellingen.standaardBtw ?? 21)}] : (f.regels || [])).map(r => ({titel:r.titel || "", omschrijving:r.omschrijving || "", prijs:r.prijs, prijsTxt:typeof r.prijs === "number" ? eur(r.prijs) : "", btw:r.btw}));
     if (!draft.regels.length) draft.regels = [blankLine()];
     draft.teksten = (f.teksten || []).map(s => ({tekstId:null, tekst:s, bewerkt:true}));
     if (b.dataset.act === "edit") { draft.editId = f.id; draft.nummer = f.nummer; draft.nrManual = f.nummer; draft.datum = f.datum; draft.bedrijfSnap = f.bedrijf || null; draft.verkoopId = f.verkoopId || null; }
@@ -1744,7 +1786,7 @@ $("#exportBtn").addEventListener("click", async () => {
   const list = filteredFacturen(); if (!list.length) { toast("Er zijn geen facturen om te exporteren."); return; }
   try { await loadXlsx(); } catch { toast("De Excel-module kon niet laden."); return; }
   const rows = [["Factuurnummer", "Datum", "Klant", "Land", "Btw-nummer klant", "Omschrijving", "Netto EUR", "Btw EUR", "Totaal EUR", "Taal", "Extra beschrijvingen"]];
-  for (const f of [...list].reverse()) { const [y, m, d] = f.datum.split("-").map(Number); rows.push([f.nummer, new Date(y, m - 1, d), f.klant?.naam || "", f.klant?.land || "", f.klant?.btw || "", (f.regels || []).map(r => r.titel).join(" | "), f.netto, f.btwBedrag, f.totaal, f.taal, (f.teksten || []).join(" | ")]); }
+  for (const f of [...list].reverse()) { const [y, m, d] = f.datum.split("-").map(Number); rows.push([f.nummer, new Date(y, m - 1, d), f.klant?.naam || "", f.klant?.land || "", f.klant?.btw || "", (f.historiek ? f.omschrijving || "" : (f.regels || []).map(r => r.titel).join(" | ")), f.netto, f.btwBedrag ?? "", f.totaal, f.taal, (f.teksten || []).join(" | ")]); }
   const ws = XLSX.utils.aoa_to_sheet(rows, {cellDates:true});
   ws["!cols"] = [{wch:13}, {wch:11}, {wch:30}, {wch:18}, {wch:18}, {wch:40}, {wch:12}, {wch:11}, {wch:12}, {wch:6}, {wch:60}];
   for (let r = 1; r < rows.length; r++) { const c = ws[XLSX.utils.encode_cell({r, c:1})]; if (c) c.z = "dd/mm/yyyy"; for (const col of [6, 7, 8]) { const cc = ws[XLSX.utils.encode_cell({r, c:col})]; if (cc) cc.z = "#,##0.00"; } }
@@ -1816,7 +1858,8 @@ function openKlantModal(k, prefill, onSaved, onCancel){
     $("#k-save").disabled = true;
     try {
       const id = k?.id || newId();
-      await ops.saveKlant(id, {...data, aangemaakt:k?.aangemaakt || new Date().toISOString()});
+      const {id:_oldId, ...prev} = k || {};
+      await ops.saveKlant(id, {...prev, ...data, aangemaakt:k?.aangemaakt || new Date().toISOString()});
       const rec = {id, ...data};
       const ix = state.klanten.findIndex(x => x.id === id); if (ix >= 0) state.klanten[ix] = rec; else state.klanten.push(rec);
       modalDone = null; closeModal(true); toast(k ? "Klant bijgewerkt" : "Klant opgeslagen");
@@ -1995,6 +2038,14 @@ async function boot(){
     setSync("Geen verbinding met SharePoint", "bad"); showConnError(e);
   }
 }
+$("#histBtn").addEventListener("click", () => { if (!online) return toast("Niet verbonden met SharePoint."); $("#histFile").value = ""; $("#histFile").click(); });
+$("#histFile").addEventListener("change", async e => {
+  const file = e.target.files?.[0]; if (!file) return;
+  const b = $("#histBtn"); b.disabled = true; b.textContent = "Bezig met importeren…";
+  try { const r = await importHistoriek(JSON.parse(await file.text())); toast(`${r.nf} facturen en ${r.nk} klanten toegevoegd${r.skip ? `, ${r.skip} facturen stonden er al` : ""}.`, 7000); }
+  catch (err) { toast("Importeren niet gelukt: " + err.message, 7000); }
+  finally { b.disabled = false; b.textContent = "Historiek importeren (JSON)"; }
+});
 boot();
 })();
 </script>
