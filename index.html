@@ -1892,14 +1892,14 @@ $("#saveDefaults").addEventListener("click", async () => {
 });
 
 /* ---------- tabs ---------- */
-function switchTab(name){
+function switchTab(name, setHash = true){
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   document.querySelectorAll(".tab").forEach(s => s.hidden = s.id !== "tab-" + name);
   if (name === "maken") scheduleUpdate();
-  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+  if (setHash && location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
 }
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
-window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (document.getElementById("tab-" + h)) switchTab(h); });
+window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (!h.includes("=") && document.getElementById("tab-" + h)) switchTab(h); });
 let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(scheduleUpdate, 120); });
 
 /* ---------- boot ---------- */
@@ -1953,7 +1953,10 @@ $("#seedFile").addEventListener("change", async e => {
 $("#backupBtn").addEventListener("click", () => { if (!Object.keys(files).length) return toast("Er zijn nog geen gegevens om te bewaren."); backupJson(); });
 async function boot(){
   $("#brandLogo").src = LOGO;
-  const h = location.hash.slice(1); switchTab(document.getElementById("tab-" + h) ? h : "maken");
+  const authHash = /(^#|&)(code|error|state)=/.test(location.hash);
+  const h = authHash ? "" : location.hash.slice(1);
+  const startTab = document.getElementById("tab-" + h) ? h : "maken";
+  switchTab(startTab, false);
   renderAll(); renderFacturen(); renderKlanten(); renderTeksten(); renderInstellingen();
   if (window.jspdf?.jsPDF) {
     await installPreviewFonts();
@@ -1965,7 +1968,7 @@ async function boot(){
     if (!configured()) { showGate("De app is nog niet gekoppeld aan Microsoft 365: de client-ID ontbreekt in index.html.", false); return; }
     if (!window.msal) { showGate("De aanmeldmodule kon niet laden. Herlaad de pagina.", false); return; }
     try { msalApp = new msal.PublicClientApplication({
-      auth:{clientId:CONFIG.clientId, authority:`https://login.microsoftonline.com/${CONFIG.tenantId}`, redirectUri:BASE_URL, postLogoutRedirectUri:BASE_URL},
+      auth:{clientId:CONFIG.clientId, authority:`https://login.microsoftonline.com/${CONFIG.tenantId}`, redirectUri:BASE_URL, postLogoutRedirectUri:BASE_URL, navigateToLoginRequestUrl:false},
       cache:{cacheLocation:"localStorage"}
     });
     await msalApp.initialize(); } catch (e) { console.error(e); showGate(null, false, "Aanmelden kon niet starten: " + (e?.message || e)); return; }
@@ -1975,6 +1978,7 @@ async function boot(){
     if (!account) { showGate(null, true); return; }
     msalApp.setActiveAccount(account);
   }
+  switchTab(startTab, true);
   $("#gate").hidden = true;
   $("#userName").textContent = account.name || account.username || "";
   $("#logoutBtn").hidden = !!window.__TEST_TOKEN;
