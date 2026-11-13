@@ -140,6 +140,9 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);background:va
 .note.warn{background:var(--warn-soft);color:var(--warn)}
 .note.info{background:var(--accent-soft);color:var(--accent)}
 .note.err{background:var(--danger-soft);color:var(--danger)}
+.sub.bad{color:var(--danger)}
+.note.warn{background:var(--accent-soft)}
+.conn{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.conn span{flex:1 1 300px;min-width:0}
 .note ul{margin:0;padding-left:18px}
 
 .actions{position:sticky;bottom:calc(10px + env(safe-area-inset-bottom,0px));z-index:3;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;box-shadow:0 6px 24px rgba(10,20,15,.10)}
@@ -246,11 +249,11 @@ a.btn{text-decoration:none}
 </header>
 
 <main class="wrap">
+  <div id="connErr" class="note err conn" hidden><span id="connMsg"></span><button class="btn sm" id="connRetry">Opnieuw proberen</button></div>
   <!-- FACTUUR MAKEN -->
   <section class="tab" id="tab-maken">
     <div class="work">
       <div class="form-col">
-        <div id="connErr" class="note err" hidden></div>
         <div id="seedCard" class="card" hidden>
           <div class="row" style="justify-content:space-between;align-items:center">
             <div style="min-width:0;flex:1 1 260px"><b>De gegevensmap in SharePoint is nog leeg</b><div class="hint">Kies het bestand <b>startgegevens.json</b> uit je map factuuropmaak Optimus: de 15 nog te maken facturen, 2 standaardteksten en de nummering na 040.</div></div>
@@ -1149,22 +1152,43 @@ const configured = () => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const userLabel = () => account?.name || account?.username || "";
 
+let redirecting = false;
+const NET_ERR = /no_network_connectivity|post_request_failed|network|timed_out|timeout/i;
 async function getToken(){
   if (window.__TEST_TOKEN) return window.__TEST_TOKEN;
-  try { return (await msalApp.acquireTokenSilent({scopes:SCOPES, account})).accessToken; }
-  catch (e) {
-    if (e instanceof msal.InteractionRequiredAuthError || /interaction_required|login_required|consent_required|no_tokens_found/.test(e?.errorCode || "")) {
+  try {
+    // Alleen cache + refresh token, nooit via een verborgen iframe (dat faalt vaak door browserinstellingen en blijft dan hangen).
+    return (await msalApp.acquireTokenSilent({scopes:SCOPES, account, cacheLookupPolicy:msal.CacheLookupPolicy.AccessTokenAndRefreshToken})).accessToken;
+  } catch (e) {
+    if (NET_ERR.test((e?.errorCode || "") + " " + (e?.message || ""))) { const n = new Error("geen internetverbinding met Microsoft"); n.step = "aanmelden"; throw n; }
+    // Aanmelding verlopen (Microsoft laat een webapp maximaal 24 uur aangemeld): één keer automatisch opnieuw aanmelden.
+    const k = "optimus.authRedirectAt", last = Number(sessionStorage.getItem(k) || 0);
+    if (Date.now() - last > 120000) {
+      sessionStorage.setItem(k, String(Date.now())); redirecting = true; setSync("Opnieuw aanmelden…");
       await msalApp.acquireTokenRedirect({scopes:SCOPES, account});
+      await new Promise(() => {});
     }
-    throw e;
+    const n = new Error("je aanmelding is verlopen. Klik op Afmelden en meld je opnieuw aan. (" + (e?.errorCode || e?.message || e) + ")");
+    n.step = "aanmelden"; n.auth = true; throw n;
   }
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function fetchT(url, opts = {}, ms = 30000){
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, {...opts, signal:ctl.signal}); }
+  catch (e) { const n = new Error(e?.name === "AbortError" ? "SharePoint antwoordt niet (time-out)" : "netwerkfout (" + (e?.message || e) + ")"); n.network = true; throw n; }
+  finally { clearTimeout(t); }
 }
 async function gfetch(url, opts = {}, retry = 0){
   const token = await getToken();
-  const res = await fetch(url.startsWith("http") ? url : GRAPH + url, {...opts, headers:{Authorization:"Bearer " + token, ...(opts.headers || {})}});
-  if ([429, 503, 504].includes(res.status) && retry < 3) {
-    const wait = (Number(res.headers.get("Retry-After")) || (1 + retry * 2)) * 1000;
-    await new Promise(r => setTimeout(r, wait)); return gfetch(url, opts, retry + 1);
+  const get = !opts.method || opts.method.toUpperCase() === "GET";
+  let res;
+  try { res = await fetchT(url.startsWith("http") ? url : GRAPH + url, {...opts, headers:{Authorization:"Bearer " + token, ...(opts.headers || {})}}, get ? 30000 : 120000); }
+  catch (e) { if (get && retry < 3) { await sleep(1500 * (retry + 1)); return gfetch(url, opts, retry + 1); } throw e; }
+  const again = get ? [429, 500, 502, 503, 504] : [429, 503];
+  if (again.includes(res.status) && retry < 3) {
+    const wait = (Number(res.headers.get("Retry-After")) || (1 + retry)) * 1000;
+    await sleep(Math.min(wait, 15000)); return gfetch(url, opts, retry + 1);
   }
   return res;
 }
@@ -1177,18 +1201,40 @@ async function gjson(url, opts){ const r = await gfetch(url, opts); if (!r.ok) t
 const alnum = s => norm(s).replace(/[^a-z0-9]/g, "");
 const encPath = p => p.split("/").filter(Boolean).map(encodeURIComponent).join("/");
 
+const LOC_KEY = "optimus.loc.v1";
 async function resolveLocation(){
-  let site;
-  if (CONFIG.siteUrl) { const u = new URL(CONFIG.siteUrl); site = await gjson(`/sites/${u.hostname}:${u.pathname.replace(/\/+$/, "")}`); }
-  else {
-    const r = await gjson(`/sites?search=${encodeURIComponent(CONFIG.siteName)}`);
-    const list = r.value || [];
-    site = list.find(x => alnum(x.displayName) === alnum(CONFIG.siteName) || alnum(x.name) === alnum(CONFIG.siteName));
-    if (!site) throw new Error(`SharePoint-site „${CONFIG.siteName}” niet gevonden.${list.length ? " Wel gevonden: " + list.map(x => x.displayName).join(", ") + "." : ""}`);
+  const c = ls.get(LOC_KEY);
+  if (c?.driveId && c?.folderId && c.folderPath === CONFIG.folderPath) {
+    const r = await gfetch(`/drives/${c.driveId}/items/${c.folderId}`);
+    if (r.ok) { const f = await r.json(); if (f.folder && !f.deleted) return {...c, webUrl:f.webUrl || c.webUrl}; }
+    else if (![400, 403, 404, 410].includes(r.status)) throw await gerr(r);   // tijdelijke fout: onthouden locatie niet weggooien
+    try { localStorage.removeItem(LOC_KEY); } catch {}
   }
+  const site = await findSite();
   const drive = await gjson(`/sites/${site.id}/drive`);
   const folder = await ensureFolder(drive.id, CONFIG.folderPath);
-  return {siteId:site.id, siteName:site.displayName || CONFIG.siteName, driveId:drive.id, folderId:folder.id, webUrl:folder.webUrl};
+  const out = {siteId:site.id, siteName:site.displayName || CONFIG.siteName, driveId:drive.id, folderId:folder.id, webUrl:folder.webUrl, folderPath:CONFIG.folderPath};
+  ls.set(LOC_KEY, out);
+  return out;
+}
+async function findSite(){
+  if (CONFIG.siteUrl) { const u = new URL(CONFIG.siteUrl); return gjson(`/sites/${u.hostname}:${u.pathname.replace(/\/+$/, "")}`); }
+  // 1) rechtstreeks op adres (…sharepoint.com/sites/dsf-company): gebruikt de zoekfunctie van Microsoft niet
+  try {
+    const root = await gjson(`/sites/root`);
+    const host = root.siteCollection?.hostname || new URL(root.webUrl).hostname;
+    const slugs = [...new Set([CONFIG.siteName, CONFIG.siteName.replace(/[^a-z0-9]/gi, "")])];
+    for (const slug of slugs) for (const kind of ["sites", "teams"]) {
+      const r = await gfetch(`/sites/${host}:/${kind}/${encodeURIComponent(slug)}`);
+      if (r.ok) return r.json();
+    }
+  } catch (e) { if (e.network || e.status >= 500 || e.auth) throw e; console.warn("site op adres niet gevonden", e); }
+  // 2) via zoeken
+  const r = await gjson(`/sites?search=${encodeURIComponent(CONFIG.siteName)}`);
+  const list = r.value || [];
+  const site = list.find(x => alnum(x.displayName) === alnum(CONFIG.siteName) || alnum(x.name) === alnum(CONFIG.siteName));
+  if (!site) throw new Error(`SharePoint-site „${CONFIG.siteName}” niet gevonden.${list.length ? " Wel gevonden: " + list.map(x => x.displayName).join(", ") + "." : ""}`);
+  return site;
 }
 async function ensureFolder(driveId, path){
   const r = await gfetch(`/drives/${driveId}/root:/${encPath(path)}`);
@@ -1212,9 +1258,12 @@ async function listData(){
   while (url) { const j = await gjson(url); out = out.concat(j.value || []); url = j["@odata.nextLink"] || null; }
   return out.filter(it => it.file && DATA_FILE.test(it.name));
 }
-async function readContent(it){
-  const r = await fetch(it["@microsoft.graph.downloadUrl"], {cache:"no-store"});
-  if (!r.ok) throw new Error(`bestand ${it.name} kon niet gelezen worden`);
+async function readContent(it, retry = 0){
+  let r;
+  try { r = await fetchT(it["@microsoft.graph.downloadUrl"], {cache:"no-store"}); }
+  catch (e) { if (retry < 2) { await sleep(1500 * (retry + 1)); return readContent(it, retry + 1); } throw e; }
+  if (!r.ok && retry < 2 && r.status >= 500) { await sleep(1500 * (retry + 1)); return readContent(it, retry + 1); }
+  if (!r.ok) throw new Error(`bestand ${it.name} kon niet gelezen worden (${r.status})`);
   const txt = await r.text();
   return txt.trim() ? JSON.parse(txt) : {};
 }
@@ -1274,7 +1323,70 @@ function rebuildState(){
   state.nummering = inst.nummering || {laatste:{}};
   state.instellingen = {standaardBtw:21, ...(inst.algemeen || {})};
   state.facturen = Object.keys(files).filter(n => /^facturen-\d{4}\.json$/.test(n)).flatMap(listOf);
+  for (const it of queue()) {
+    if (it.type === "klant" && !state.klanten.some(k => k.id === it.id)) state.klanten.push({id:it.id, ...it.v, wachtrij:true});
+    if (it.type === "factuur") state.facturen.push({...it.doc, id:"q-" + it.qid, qid:it.qid, wachtrij:true, fout:it.fout || ""});
+  }
+  if (online) saveCache();
   rerenderData();
+}
+/* ---------- noodmodus: lokale kopie van de gegevens + wachtrij voor wat zonder verbinding gemaakt wordt ---------- */
+const CACHE_KEY = "optimus.kopie.v1", QUEUE_KEY = "optimus.wachtrij.v1";
+let offlineSince = null, lastSyncAt = null, connFailed = false;
+function queue(){ const q = ls.get(QUEUE_KEY); return Array.isArray(q) ? q : []; }
+function setQueue(q){ localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); }   // geeft een fout als het niet lukt: dan is er niets bewaard
+function updateQ(qid, fn){ const q = queue(), i = q.findIndex(x => x.qid === qid); if (i < 0) return; if (fn(q[i]) === null) q.splice(i, 1); setQueue(q); }
+function saveCache(){ try { localStorage.setItem(CACHE_KEY, JSON.stringify({at:new Date().toISOString(), files})); } catch (e) { console.warn("lokale kopie niet bewaard", e); } }
+function loadCache(){
+  if (state.loaded) return true;
+  const c = ls.get(CACHE_KEY); if (!c?.files) return false;
+  for (const [n, f] of Object.entries(c.files)) if (DATA_FILE.test(n)) files[n] = f;
+  state.loaded = true; offlineSince = c.at; rebuildState(); return true;
+}
+const fmtStamp = iso => { try { return new Date(iso).toLocaleString("nl-BE", {day:"2-digit", month:"2-digit", year:"numeric", hour:"2-digit", minute:"2-digit"}); } catch { return iso; } };
+function afterCreate(saved){
+  if (saved.verkoopId) ops.updateVerkoop(saved.verkoopId, {status:"gefactureerd", factuur:saved.nummer}).catch(() => {});
+  for (const r of saved.regels || []) if (r.paardId) ops.updatePaard(r.paardId, {factuur:saved.nummer, klant:saved.klant?.naam || "", gefactureerdOp:saved.datum}).catch(() => {});
+}
+function createOffline(inv){
+  const info = finalNumberInfo();
+  const p = info.manual ? info.p : (info.o && state.loaded ? parseNr(nrString(info.o), inv.datum) : null);
+  if (!p?.nummer) throw new Error("vul zelf het factuurnummer in: op deze pc zijn nog geen gegevens uit SharePoint bewaard");
+  const c = nrConflict(p, null); if (c) throw new Error(`nummer ${p.nummer} is al gebruikt door factuur ${c.nummer}`);
+  const qid = newId(), at = new Date().toISOString();
+  const doc = {...inv, nummer:p.nummer, jaar:p.jaar, week:p.week, volgnr:p.volgnr, handmatigNummer:!!info.manual, offlineGemaakt:at, aangemaaktDoor:userLabel()};
+  const q = queue(); q.push({type:"factuur", qid, p, doc, at}); setQueue(q);
+  rebuildState();
+  return {...doc, id:"q-" + qid, qid, wachtrij:true};
+}
+let flushing = false;
+async function flushQueue(){
+  if (flushing || !online || !queue().length) return;
+  flushing = true; let ok = 0, bad = 0;
+  try {
+    for (const it of queue().filter(x => x.type === "klant")) {
+      try {
+        if (!listOf("klanten.json").some(k => k.id === it.id)) await ops.saveKlant(it.id, {...it.v, aangemaakt:it.at, aangemaaktDoor:it.door || ""});
+        updateQ(it.qid, () => null);
+      } catch (e) { console.error(e); bad++; updateQ(it.qid, x => { x.fout = e.message; }); }
+    }
+    for (const it of queue().filter(x => x.type === "factuur")) {
+      try {
+        const known = () => listOf(fFile(it.p.jaar)).find(f => f.wachtrijId === it.qid);
+        let saved = known();
+        if (!saved) {
+          try { saved = await createManual({...it.doc, wachtrijId:it.qid}, it.p); }
+          catch (e) { await readFresh(fFile(it.p.jaar)).catch(() => {}); saved = known(); if (!saved) throw e; }
+        }
+        updateQ(it.qid, () => null);
+        afterCreate(saved);
+        if (!saved.pdf) await storePdf(saved, false);
+        ok++;
+      } catch (e) { console.error(e); bad++; updateQ(it.qid, x => { x.fout = e.message; }); }
+    }
+  } finally { flushing = false; rebuildState(); }
+  if (ok) toast(ok === 1 ? "De factuur die zonder verbinding gemaakt werd, staat nu in SharePoint." : `De ${ok} facturen die zonder verbinding gemaakt werden, staan nu in SharePoint.`, 7000);
+  if (bad) toast(`${bad === 1 ? "1 factuur of klant kon" : bad + " facturen of klanten konden"} niet in SharePoint gezet worden. Kijk in het tabblad Facturen.`, 9000);
 }
 const ops = {
   saveKlant: (id, v) => mutate("klanten.json", d => { itemsOf(d)[id] = v; }),
@@ -1339,10 +1451,10 @@ async function uploadPdf(inv, blob){
   return {id:it.id, name:it.name, webUrl:it.webUrl};
 }
 /* PDF maken, lokaal downloaden en in SharePoint bewaren */
-async function storePdf(saved){
+async function storePdf(saved, download = true){
   if (!pdfReady) { toast("De PDF-module is nog niet geladen."); return null; }
   const blob = renderPdf(saved).output("blob");
-  localDownload(pdfName(saved), blob);
+  if (download) localDownload(pdfName(saved), blob);
   try {
     const old = saved.pdf;
     const pdf = await uploadPdf(saved, blob);
@@ -1350,7 +1462,7 @@ async function storePdf(saved){
     await patchFactuur(saved, {pdf});
     saved.pdf = pdf;
     return pdf;
-  } catch (e) { console.error(e); toast("De PDF is gedownload, maar bewaren in SharePoint lukte niet: " + e.message, 6000); return null; }
+  } catch (e) { console.error(e); toast((download ? "De PDF is gedownload, maar b" : "B") + "ewaren van de PDF in SharePoint lukte niet: " + e.message, 6000); return null; }
 }
 async function seedStart(seed){
   if (!seed || typeof seed !== "object" || !(seed.teksten || seed.verkopen || seed.nummering)) throw new Error("dit is geen bestand met startgegevens");
@@ -1402,12 +1514,96 @@ async function importHistoriek(data){
   });
   return {nk, nf, skip, np};
 }
-async function openPad(f){
+const HIST_PDF_DIR = jaar => `A OPTIMUS/X Verkoopfacturen Optimus/${jaar}/PDF voor klant`;
+function pdfDir(f){ if (f.pdfPad) return f.pdfPad.split("/").slice(0, -1).join("/"); return f.historiek ? HIST_PDF_DIR(f.jaar) : `${CONFIG.folderPath}/PDF/${f.jaar}`; }
+function itemPath(it){
+  const p = it?.parentReference?.path || "", i = p.indexOf("root:");
+  if (i < 0) return null;
+  let rel = p.slice(i + 5); try { rel = decodeURIComponent(rel); } catch {}
+  rel = rel.replace(/^\/+/, "");
+  return (rel ? rel + "/" : "") + it.name;
+}
+async function getItem(url){ const r = await gfetch(url); if (r.ok) { const it = await r.json(); return it.deleted ? null : it; } if (r.status === 404) return null; throw await gerr(r); }
+async function listChildren(id){ let url = `/drives/${loc.driveId}/items/${id}/children?$top=200`, out = []; while (url) { const j = await gjson(url); out = out.concat(j.value || []); url = j["@odata.nextLink"] || null; } return out; }
+/* Een PDF wordt onthouden via haar vaste ID in SharePoint: hernoemen of verplaatsen breekt de koppeling niet. */
+async function findPdf(f){
+  const id = f.pdf?.id || f.pdfId;
+  if (id) { const it = await getItem(`/drives/${loc.driveId}/items/${id}`); if (it) return it; }
+  if (f.pdfPad) { const it = await getItem(`/drives/${loc.driveId}/root:/${encPath(f.pdfPad)}`); if (it) { if (it.id !== id) linkPdf(f, it).catch(() => {}); return it; } }
+  return null;
+}
+function linkPdf(f, it){
+  if (f.historiek || !f.pdf) return patchFactuur(f, {pdfId:it.id, pdfPad:itemPath(it) || f.pdfPad || null});
+  return patchFactuur(f, {pdf:{id:it.id, name:it.name, webUrl:it.webUrl}});
+}
+async function openFactuurPdf(f){
+  if (!online) return toast("Niet verbonden met SharePoint.");
   const w = window.open("", "_blank");
   try {
-    const it = await gjson(`/drives/${loc.driveId}/root:/${encPath(f.pdfPad)}`);
-    if (w) { w.opener = null; w.location.href = it.webUrl; } else window.open(it.webUrl, "_blank", "noopener");
-  } catch (e) { if (w) w.close(); toast("PDF niet gevonden in SharePoint: " + e.message, 6000); }
+    const it = await findPdf(f);
+    if (it) { if (w) { w.opener = null; w.location.href = it.webUrl; } else window.open(it.webUrl, "_blank", "noopener"); return; }
+    if (w) w.close();
+    pickPdf(f, true);
+  } catch (e) { if (w) w.close(); toast("De PDF openen is niet gelukt: " + e.message, 6000); }
+}
+function pickPdf(f, notFound){
+  if (!online) return toast("Niet verbonden met SharePoint.");
+  let folder = null, items = [], q = "", idx = 0;
+  const stop = /^(veulen|foal|poulain|jaarling|yearling|paard|horse|cheval|optima|optimus|the|and|van|voor|pour|les|des)$/;
+  const words = [...new Set(norm(`${f.klant?.naam || ""} ${f.omschrijving || ""} ${(f.regels || []).map(r => r.titel).join(" ")}`).split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !stop.test(w)))];
+  const nrBits = [f.nummer, f.volgnr != null ? pad(f.volgnr, 3) : null].filter(Boolean).map(String);
+  const score = it => { const n = norm(it.name); return words.reduce((sc, w) => sc + (n.includes(w) ? 2 : 0), 0) + nrBits.reduce((sc, b) => sc + (n.includes(b) ? 3 : 0), 0); };
+  dialog.innerHTML = `<h3>PDF koppelen aan factuur ${esc(f.nummer)}</h3>
+    <p class="hint" style="margin:0 0 10px">${notFound ? "De PDF is niet meer gevonden, waarschijnlijk hernoemd of verplaatst. " : ""}Kies het juiste bestand. De app onthoudt het, ook als het later hernoemd of verplaatst wordt.</p>
+    <div class="hint" id="pp-dir" style="margin-bottom:6px"></div>
+    <input id="pp-q" type="text" placeholder="Zoek op bestandsnaam" autocomplete="off">
+    <ul class="hlist" id="pp-list" role="listbox"></ul>
+    <div class="foot"><button class="btn ghost" id="pp-cancel">Annuleren</button></div>`;
+  modalDone = null; modal.hidden = false; setTimeout(() => $("#pp-q")?.focus(), 20);
+  const visible = () => { const nq = norm(q); return items.filter(it => it.folder || !nq || norm(it.name).includes(nq)); };
+  const paint = () => {
+    const list = visible();
+    $("#pp-dir").innerHTML = folder ? `Map: <b>${esc(folder.path)}</b>` : "";
+    $("#pp-list").innerHTML = (folder?.parentId ? `<li data-up="1"><span>↑ Map hoger</span></li>` : "") + (list.length ? list.map((it, i) => `<li role="option" data-i="${i}" aria-selected="${i === idx}"><span>${it.folder ? "▸ " : ""}<b>${esc(it.name)}</b></span><small style="text-align:right;white-space:nowrap">${it.folder ? "map" : esc(fmtDate(String(it.lastModifiedDateTime || "").slice(0, 10)))}</small></li>`).join("") : `<li style="cursor:default"><small>Geen PDF's in deze map.</small></li>`);
+  };
+  const load = async ref => {
+    $("#pp-list").innerHTML = `<li style="cursor:default"><small>Laden…</small></li>`;
+    try {
+      const self = ref.id ? await getItem(`/drives/${loc.driveId}/items/${ref.id}`) : (ref.path ? await getItem(`/drives/${loc.driveId}/root:/${encPath(ref.path)}`) : await gjson(`/drives/${loc.driveId}/root`));
+      if (!self && ref.path) return load({path:ref.path.split("/").slice(0, -1).join("/")});
+      const kids = await listChildren(self.id);
+      folder = {id:self.id, parentId:self.root ? null : (self.parentReference?.id || null), path:itemPath(self) || "hoofdmap"};
+      const pdfs = kids.filter(k => k.file && /\.pdf$/i.test(k.name)).sort((a, b) => score(b) - score(a) || String(b.lastModifiedDateTime).localeCompare(String(a.lastModifiedDateTime)));
+      items = [...pdfs, ...kids.filter(k => k.folder).sort((a, b) => a.name.localeCompare(b.name))];
+      idx = 0; paint();
+    } catch (e) { $("#pp-list").innerHTML = `<li style="cursor:default"><small>${esc("Laden is niet gelukt: " + e.message)}</small></li>`; }
+  };
+  const choose = async i => {
+    const it = visible()[i]; if (!it) return;
+    if (it.folder) return load({id:it.id});
+    try { await linkPdf(f, it); closeModal(true); toast(`PDF „${it.name}” gekoppeld aan factuur ${f.nummer}. Klik op Openen om ze te bekijken.`, 6000); }
+    catch (e) { toast("Koppelen is niet gelukt: " + e.message, 6000); }
+  };
+  $("#pp-cancel").addEventListener("click", () => closeModal(undefined));
+  $("#pp-q").addEventListener("input", e => { q = e.target.value; idx = 0; paint(); });
+  $("#pp-q").addEventListener("keydown", e => { const n = visible().length; if (e.key === "ArrowDown") { idx = Math.min(n - 1, idx + 1); paint(); e.preventDefault(); } if (e.key === "ArrowUp") { idx = Math.max(0, idx - 1); paint(); e.preventDefault(); } if (e.key === "Enter") { e.preventDefault(); choose(idx); } });
+  $("#pp-list").addEventListener("click", e => { if (e.target.closest("li[data-up]")) return load({id:folder.parentId}); const li = e.target.closest("li[data-i]"); if (li) choose(+li.dataset.i); });
+  load({path:pdfDir(f)});
+}
+/* Eenmalig per sessie: oude facturen die nog via bestandsnaam gekoppeld zijn, vastzetten op hun ID. */
+let pdfLinkDone = false;
+async function linkAllPdfs(){
+  if (pdfLinkDone || !online) return; pdfLinkDone = true;
+  const todo = state.facturen.filter(f => f.historiek && f.pdfPad && !f.pdfId && !f.wachtrij);
+  if (!todo.length) return;
+  const byDir = {}, patches = {};
+  todo.forEach(f => (byDir[pdfDir(f)] ||= []).push(f));
+  for (const [dir, list] of Object.entries(byDir)) {
+    const self = await getItem(`/drives/${loc.driveId}/root:/${encPath(dir)}`); if (!self) continue;
+    const byName = new Map((await listChildren(self.id)).filter(k => k.file).map(k => [k.name.toLowerCase(), k]));
+    for (const f of list) { const k = byName.get(f.pdfPad.split("/").pop().toLowerCase()); if (k) (patches[fFile(f.jaar)] ||= {})[f.id] = k.id; }
+  }
+  for (const [file, map] of Object.entries(patches)) await mutate(file, d => { const it = itemsOf(d); for (const [id, pid] of Object.entries(map)) if (it[id] && !it[id].pdfId) it[id].pdfId = pid; });
 }
 
 const DRAFT_KEY = "optimus-concept-v1";
@@ -1428,7 +1624,7 @@ function nextSeq(year){
   for (const f of state.facturen) if (Number(f.jaar) === year && Number(f.volgnr) > max) max = Number(f.volgnr);
   return max + 1;
 }
-function expectedNumber(iso){ if (!iso) return null; const y = Number(iso.slice(0, 4)); return {y, w:isoWeek(iso), s:nextSeq(y)}; }
+function expectedNumber(iso){ if (!iso || !state.loaded) return null; const y = Number(iso.slice(0, 4)); return {y, w:isoWeek(iso), s:nextSeq(y)}; }
 const nrString = o => `${o.y}${pad(o.w, 2)}${pad(o.s, 3)}`;
 
 /* ---------- paarden op factuur ---------- */
@@ -1504,10 +1700,11 @@ function draftToInvoice(){
     verkoopId: draft.verkoopId || null
   };
 }
+const createLabel = () => draft.editId ? "Wijzigingen opslaan + PDF" : (online ? "Factuur aanmaken + PDF" : "Factuur aanmaken + PDF (zonder verbinding)");
 function renderAll(){
   renderKlantBox(); renderMeta(); renderLines(); renderTexts(); renderTextSelect(); renderQueue(); scheduleUpdate();
   $("#editBanner").hidden = !draft.editId; $("#editNr").textContent = draft.nummer || "";
-  $("#createBtn").textContent = draft.editId ? "Wijzigingen opslaan + PDF" : "Factuur aanmaken + PDF";
+  $("#createBtn").textContent = createLabel();
 }
 function renderKlantBox(){
   const k = currentKlant();
@@ -1552,7 +1749,7 @@ function renderMeta(){
       h = `Zelf ingevuld: volgnummer ${pad(info.p.volgnr, 3)} van ${info.p.jaar}.`;
       if (info.p.week && /^\d{4}-\d{2}-\d{2}$/.test(draft.datum || "") && info.p.week !== isoWeek(draft.datum)) h += ` Let op: week ${pad(info.p.week, 2)} in het nummer, de factuurdatum valt in week ${pad(isoWeek(draft.datum), 2)}.`;
     }
-  } else h = draft.editId ? "Typ een ander nummer om het nummer van deze factuur te wijzigen." : "Leeg laten voor het automatische nummer, of typ zelf een nummer.";
+  } else h = draft.editId ? "Typ een ander nummer om het nummer van deze factuur te wijzigen." : (connFailed && !state.loaded ? "Geen gegevens uit SharePoint op deze pc: typ zelf het factuurnummer." : "Leeg laten voor het automatische nummer, of typ zelf een nummer.");
   const msg = $("#nrMsg"); msg.textContent = h; msg.className = bad ? "hint bad" : "hint";
 }
 function renderLines(){
@@ -1740,7 +1937,7 @@ async function createOrSave(){
   const inv = draftToInvoice();
   const errs = validate(inv);
   if (errs.length) { updatePreview(); showErrors(errs); return; }
-  if (!online) { toast("Niet verbonden met SharePoint. De factuur is niet aangemaakt."); return; }
+  if (!online) return createOrSaveOffline(inv);
   const btn = $("#createBtn"); btn.disabled = true; btn.textContent = "Bezig…";
   try {
     const t = totals(inv.regels);
@@ -1757,8 +1954,7 @@ async function createOrSave(){
       toast(`Factuur ${saved.nummer} bijgewerkt`);
     } else {
       saved = info.manual ? await createManual(inv, info.p) : await createAuto(inv);
-      if (inv.verkoopId) ops.updateVerkoop(inv.verkoopId, {status:"gefactureerd", factuur:saved.nummer}).catch(() => {});
-      for (const r of inv.regels) if (r.paardId) ops.updatePaard(r.paardId, {factuur:saved.nummer, klant:saved.klant?.naam || "", gefactureerdOp:saved.datum}).catch(() => {});
+      afterCreate(saved);
       toast(`Factuur ${saved.nummer} aangemaakt`);
     }
     lastCreated = saved;
@@ -1771,7 +1967,21 @@ async function createOrSave(){
     if (pdf?.webUrl) { $("#doneLink").href = pdf.webUrl; $("#doneLink").hidden = false; }
   } catch (e) {
     console.error(e); toast(e?.message ? `Niet gelukt: ${e.message}` : "Niet gelukt. Probeer opnieuw.", 6000);
-  } finally { btn.disabled = false; btn.textContent = draft.editId ? "Wijzigingen opslaan + PDF" : "Factuur aanmaken + PDF"; }
+  } finally { btn.disabled = false; btn.textContent = createLabel(); }
+}
+async function createOrSaveOffline(inv){
+  if (draft.editId) { toast("Een bestaande factuur aanpassen kan pas als de verbinding met SharePoint terug is.", 6000); return; }
+  try {
+    const t = totals(inv.regels); Object.assign(inv, {netto:t.net, btwBedrag:t.vat, totaal:t.total});
+    const saved = createOffline(inv);
+    lastCreated = saved;
+    $("#doneNr").textContent = saved.nummer;
+    $("#doneSub").textContent = `${saved.klant?.naam || ""} · € ${eur(saved.totaal)} · gemaakt zonder verbinding: de PDF is gedownload en de factuur gaat vanzelf naar SharePoint zodra de verbinding terug is`;
+    $("#doneLink").hidden = true; $("#doneCard").hidden = false;
+    draft = blankDraft(); addAutoTexts(); renderAll(); window.scrollTo({top:0, behavior:"smooth"});
+    await downloadPdf(saved);
+    toast(`Factuur ${saved.nummer} gemaakt zonder verbinding`);
+  } catch (e) { console.error(e); toast("Niet gelukt: " + (e?.message || e), 7000); }
 }
 function pdfName(inv){ const L = LBL[inv.taal] || LBL.EN; return `${L.file} ${inv.nummer} - ${String(inv.klant?.naam || "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim()}.pdf`; }
 function localDownload(filename, blob){
@@ -1835,17 +2045,17 @@ function renderFacturen(){
   sel.innerHTML = `<option value="">Alle jaren</option>` + years.map(y => `<option ${String(y) === cur ? "selected" : ""}>${y}</option>`).join("");
   if (!fJaarInit && years.length) { sel.value = String(years[0]); fJaarInit = true; }
   const list = filteredFacturen();
-  const lastByYear = {}; realFacturen().forEach(f => { if (f.volgnr == null) return; if (!lastByYear[f.jaar] || f.volgnr > lastByYear[f.jaar].volgnr) lastByYear[f.jaar] = f; });
+  const lastByYear = {}; realFacturen().forEach(f => { if (f.volgnr == null || f.wachtrij) return; if (!lastByYear[f.jaar] || f.volgnr > lastByYear[f.jaar].volgnr) lastByYear[f.jaar] = f; });
   $("#fBody").innerHTML = list.map(f => {
-    const hist = !!f.historiek;
+    const hist = !!f.historiek, wq = !!f.wachtrij;
     const omschr = hist ? (f.omschrijving || "") : (f.regels || []).map(r => r.titel).filter(Boolean).join(" · ");
     const isLast = !hist && (lastByYear[f.jaar]?.id === f.id || f.volgnr == null);
-    const sub = hist ? [f.betaalstatus, f.peppol, f.notitie].filter(Boolean).join(" · ") : `${f.taal || ""}${(f.teksten || []).length ? " · " + f.teksten.length + " extra tekst" + (f.teksten.length > 1 ? "en" : "") : ""}`;
-    const open = f.pdf?.webUrl ? `<a class="btn sm ghost" href="${esc(f.pdf.webUrl)}" target="_blank" rel="noopener">Openen</a> ` : (f.pdfPad ? `<button class="btn sm ghost" data-act="openpad">Openen</button> ` : "");
-    const acts = hist ? `${open}<button class="btn sm" data-act="copy">Kopiëren</button>` : `${open}<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="copy">Kopiëren</button> <button class="btn sm ghost" data-act="edit">Aanpassen</button>${isLast ? ` <button class="btn sm ghost danger" data-act="del" title="Alleen de laatste factuur van het jaar kan weg">Verwijderen</button>` : ""}`;
-    return `<tr data-id="${esc(f.id)}"><td class="nr">${esc(f.nummer)}${hist ? `<div class="sub">historiek</div>` : ""}</td><td>${esc(fmtDate(f.datum))}</td>
+    const sub = wq ? (f.fout ? "Niet in SharePoint gezet: " + f.fout : "gemaakt zonder verbinding") : hist ? [f.betaalstatus, f.peppol, f.notitie].filter(Boolean).join(" · ") : `${f.taal || ""}${(f.teksten || []).length ? " · " + f.teksten.length + " extra tekst" + (f.teksten.length > 1 ? "en" : "") : ""}`;
+    const open = (f.pdf?.id || f.pdfId || f.pdfPad) ? `<button class="btn sm ghost" data-act="open">Openen</button> ` : (hist ? `<button class="btn sm ghost" data-act="link" title="Een PDF uit SharePoint aan deze factuur koppelen">PDF koppelen</button> ` : "");
+    const acts = wq ? `<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="qnr">Nummer wijzigen</button> <button class="btn sm ghost danger" data-act="qdel">Verwijderen</button>` : hist ? `${open}<button class="btn sm" data-act="copy">Kopiëren</button>` : `${open}<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="copy">Kopiëren</button> <button class="btn sm ghost" data-act="edit">Aanpassen</button>${isLast ? ` <button class="btn sm ghost danger" data-act="del" title="Alleen de laatste factuur van het jaar kan weg">Verwijderen</button>` : ""}`;
+    return `<tr data-id="${esc(f.id)}"><td class="nr">${esc(f.nummer)}${hist ? `<div class="sub">historiek</div>` : ""}${wq ? `<div class="sub${f.fout ? " bad" : ""}">${f.fout ? "niet in SharePoint" : "wacht op SharePoint"}</div>` : ""}</td><td>${esc(fmtDate(f.datum))}</td>
       <td>${esc(f.klant?.naam || "")}<div class="sub">${esc(f.klant?.land || "")}</div></td>
-      <td>${esc(omschr)}<div class="sub">${esc(sub)}</div></td>
+      <td>${esc(omschr)}<div class="sub${wq && f.fout ? " bad" : ""}">${esc(sub)}</div></td>
       <td class="num">€ ${eur(f.totaal ?? f.netto)}${typeof f.netto === "number" ? `<div class="sub">netto ${eur(f.netto)}</div>` : ""}</td>
       <td class="acts">${acts}</td></tr>`;
   }).join("");
@@ -1861,7 +2071,22 @@ $("#fZoek").addEventListener("input", renderFacturen); $("#fJaar").addEventListe
 $("#fBody").addEventListener("click", async e => {
   const b = e.target.closest("button[data-act]"); if (!b) return;
   const f = state.facturen.find(x => x.id === b.closest("tr").dataset.id); if (!f) return;
-  if (b.dataset.act === "openpad") return openPad(f);
+  if (b.dataset.act === "open" || b.dataset.act === "openpad") return openFactuurPdf(f);
+  if (b.dataset.act === "link") return pickPdf(f, false);
+  if (b.dataset.act === "qnr") {
+    const v = await askText(`Nummer van factuur ${f.nummer} wijzigen`, "Nieuw factuurnummer", f.nummer, "Wijzigen"); if (!v || v === f.nummer) return;
+    const p = parseNr(v, f.datum);
+    if (!/^[A-Za-z0-9_\-.\/]+$/.test(p.nummer)) return toast("Het factuurnummer mag alleen cijfers, letters en - . / bevatten.");
+    const c = nrConflict(p, f.id); if (c) return toast(`Nummer ${p.nummer} is al gebruikt door factuur ${c.nummer}.`, 6000);
+    try { updateQ(f.qid, x => { Object.assign(x.doc, {nummer:p.nummer, jaar:p.jaar, week:p.week, volgnr:p.volgnr, handmatigNummer:true}); x.p = p; delete x.fout; }); } catch (e) { return toast("Niet gelukt: " + e.message); }
+    rebuildState(); toast(`Nummer gewijzigd naar ${p.nummer}. Download de PDF opnieuw: de vorige PDF heeft nog het oude nummer.`, 8000);
+    flushQueue(); return;
+  }
+  if (b.dataset.act === "qdel") {
+    if (!(await confirmBox(`Factuur ${f.nummer} verwijderen?`, "Deze factuur is gemaakt zonder verbinding en staat nog niet in SharePoint. Ze wordt van deze pc verwijderd.", "Verwijderen", true))) return;
+    try { updateQ(f.qid, () => null); } catch (e) { return toast("Niet gelukt: " + e.message); }
+    rebuildState(); toast(`Factuur ${f.nummer} verwijderd`); return;
+  }
   if (b.dataset.act === "pdf") return downloadPdf(f);
   if (b.dataset.act === "copy" || b.dataset.act === "edit") {
     if (draftIsDirty() && !(await confirmBox("Huidige invoer vervangen?", "Op Factuur maken staat nog een factuur in opmaak. Die invoer wordt vervangen.", "Vervangen"))) return;
@@ -1970,7 +2195,16 @@ function openKlantModal(k, prefill, onSaved, onCancel){
     ev?.preventDefault();
     const data = {}; ["naam", "straat", "plaats", "land", "btw", "taal", "email", "notitie"].forEach(f => data[f] = ($("#k-" + f).value || "").trim());
     if (!data.naam) { $("#k-err").textContent = "Vul de naam van de klant in."; $("#k-naam").focus(); return; }
-    if (!online) { $("#k-err").textContent = "Niet verbonden met SharePoint."; return; }
+    if (!online) {
+      if (k && !k.wachtrij) { $("#k-err").textContent = "Een bestaande klant wijzigen kan pas als de verbinding met SharePoint terug is."; return; }
+      const id = k?.id || newId();
+      try { const q = queue(), ex = q.find(x => x.type === "klant" && x.id === id); if (ex) ex.v = data; else q.push({type:"klant", qid:newId(), id, v:data, at:new Date().toISOString(), door:userLabel()}); setQueue(q); }
+      catch (e) { $("#k-err").textContent = "Bewaren op deze pc is niet gelukt: " + e.message; return; }
+      rebuildState();
+      modalDone = null; closeModal(true); toast("Klant bewaard op deze pc. Ze gaat vanzelf naar SharePoint zodra de verbinding terug is.", 6000);
+      if (onSaved) onSaved({id, ...data});
+      return;
+    }
     $("#k-save").disabled = true;
     try {
       const id = k?.id || newId();
@@ -2142,16 +2376,26 @@ function loginErrorText(e){
   return "Aanmelden is niet gelukt: " + m;
 }
 function showConnError(e){
-  const el = $("#connErr");
   let hint = "";
-  if (e?.status === 403 || e?.status === 401) hint = " Controleer of je toegang hebt tot de SharePoint-site en of de app de rechten Sites.ReadWrite.All heeft (met admin consent).";
-  el.textContent = "Geen verbinding met SharePoint: " + (e?.message || e) + hint;
-  el.hidden = false;
+  if (e?.status === 403 || e?.status === 401) hint = " Controleer of je toegang hebt tot de SharePoint-site dsf-company.";
+  else if (!e?.auth) hint = " De app probeert het automatisch opnieuw.";
+  const work = offlineSince
+    ? ` Je werkt met de gegevens zoals ze op deze pc bewaard zijn (${fmtStamp(offlineSince)}). Facturen en klanten die je nu maakt, worden op deze pc bewaard en gaan vanzelf naar SharePoint zodra de verbinding terug is.`
+    : " Je kunt toch een factuur maken: typ de klant en het factuurnummer zelf in. Ze gaat vanzelf naar SharePoint zodra de verbinding terug is.";
+  $("#connMsg").textContent = (offlineSince ? "Geen verbinding met SharePoint" : "Geen verbinding met SharePoint, je gegevens zijn niet geladen") + (e?.step ? ` (stap: ${e.step})` : "") + ": " + (e?.message || e) + "." + hint + work;
+  $("#connErr").hidden = false;
+}
+function goOffline(e){
+  if (!online) return;
+  online = false; connFailed = true; offlineSince = lastSyncAt || new Date().toISOString();
+  setSync("Geen verbinding met SharePoint", "bad"); showConnError(e); renderAll();
+  clearTimeout(retryT); retryT = setTimeout(connect, 15000);
 }
 let polling = false;
 function startPolling(){
   if (polling) return; polling = true;
-  const tick = () => { if (online && !writing && document.visibilityState === "visible") syncAll().then(() => setSync("Opgeslagen in SharePoint", "ok")).catch(e => { console.error(e); setSync("Synchroniseren mislukt", "bad"); }); };
+  let fails = 0;
+  const tick = () => { if (online && !writing && document.visibilityState === "visible") syncAll().then(() => { fails = 0; lastSyncAt = new Date().toISOString(); setSync("Opgeslagen in SharePoint", "ok"); flushQueue(); }).catch(e => { console.error(e); setSync("Synchroniseren mislukt", "bad"); if ((e.network || e.status >= 500) && ++fails >= 2) { fails = 0; goOffline(e); } }); };
   setInterval(tick, 30000);
   window.addEventListener("focus", tick);
 }
@@ -2168,6 +2412,7 @@ $("#backupBtn").addEventListener("click", () => { if (!Object.keys(files).length
 async function boot(){
   $("#brandLogo").src = LOGO;
   const authHash = /(^#|&)(code|error|state)=/.test(location.hash);
+  if (authHash && window.self !== window.top) return;   // antwoord van Microsoft in een verborgen frame: app niet opstarten
   const h = authHash ? "" : location.hash.slice(1);
   const startTab = document.getElementById("tab-" + h) ? h : "maken";
   switchTab(startTab, false);
@@ -2196,19 +2441,37 @@ async function boot(){
   $("#gate").hidden = true;
   $("#userName").textContent = account.name || account.username || "";
   $("#logoutBtn").hidden = !!window.__TEST_TOKEN;
+  connect();
+}
+let connecting = false, retryT = null, retryN = 0;
+async function connect(){
+  if (connecting || online || redirecting) return;
+  connecting = true; clearTimeout(retryT);
   setSync("Verbinden met SharePoint…");
+  let step = "map zoeken";
   try {
     loc = await resolveLocation();
-    online = true;
+    step = "gegevens lezen";
     await syncAll();
-    rerenderData();
+    online = true; retryN = 0; offlineSince = null; connFailed = false; lastSyncAt = new Date().toISOString();
+    try { sessionStorage.removeItem("optimus.authRedirectAt"); } catch {}
+    $("#connErr").hidden = true;
+    saveCache(); rerenderData(); renderAll();
     setSync("Opgeslagen in SharePoint", "ok");
     startPolling();
+    await flushQueue();
+    linkAllPdfs().catch(e => console.warn("PDF-koppelingen niet vastgezet", e));
   } catch (e) {
     console.error(e); online = false;
-    setSync("Geen verbinding met SharePoint", "bad"); showConnError(e);
-  }
+    if (redirecting) return;
+    e.step ||= step; connFailed = true;
+    loadCache(); renderAll();
+    setSync(offlineSince ? "Geen verbinding, gegevens van " + fmtStamp(offlineSince) : "Geen verbinding met SharePoint", "bad"); showConnError(e);
+    if (!e.auth) retryT = setTimeout(connect, [10, 20, 40, 60][Math.min(retryN++, 3)] * 1000);
+  } finally { connecting = false; }
 }
+$("#connRetry").addEventListener("click", () => { retryN = 0; connect(); });
+window.addEventListener("focus", () => { if (!online && account && !connecting) connect(); });
 $("#histBtn").addEventListener("click", () => { if (!online) return toast("Niet verbonden met SharePoint."); $("#histFile").value = ""; $("#histFile").click(); });
 $("#histFile").addEventListener("change", async e => {
   const file = e.target.files?.[0]; if (!file) return;
