@@ -141,6 +141,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--accent);background:va
 .note.info{background:var(--accent-soft);color:var(--accent)}
 .note.err{background:var(--danger-soft);color:var(--danger)}
 .sub.bad{color:var(--danger)}
+.dn-nums{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}.dn-nums .check{padding-bottom:9px;white-space:nowrap}
 .note.warn{background:var(--accent-soft)}
 .conn{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 14px}.conn span{flex:1 1 300px;min-width:0}
 .note ul{margin:0;padding-left:18px}
@@ -239,6 +240,7 @@ a.btn{text-decoration:none}
     <nav class="tabs" role="tablist" aria-label="Onderdelen">
       <button role="tab" data-tab="maken" aria-selected="true">Factuur maken</button>
       <button role="tab" data-tab="facturen" aria-selected="false">Facturen</button>
+      <button role="tab" data-tab="leveringsbonnen" aria-selected="false">Leveringsbonnen</button>
       <button role="tab" data-tab="klanten" aria-selected="false">Klanten</button>
       <button role="tab" data-tab="paarden" aria-selected="false">Paarden</button>
       <button role="tab" data-tab="teksten" aria-selected="false">Standaardteksten</button>
@@ -357,6 +359,87 @@ a.btn{text-decoration:none}
         <tbody id="fBody"></tbody>
       </table>
       <div id="fEmpty" class="empty" hidden><b>Nog geen facturen in de app</b>Facturen die je via Factuur maken aanmaakt, komen hier automatisch bij.</div>
+    </div>
+  </section>
+
+  <!-- LEVERINGSBONNEN -->
+  <section class="tab" id="tab-leveringsbonnen" hidden>
+    <div id="dnListView">
+      <div class="toolbar">
+        <input id="dZoek" type="text" placeholder="Zoek op nummer, klant, paard of factuur" aria-label="Leveringsbonnen zoeken">
+        <select id="dJaar" aria-label="Jaar"></select>
+        <span class="grow hint" id="dSum"></span>
+        <button class="btn primary" id="dNew">+ Nieuwe leveringsbon</button>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Nummer</th><th>Datum</th><th>Klant</th><th>Paarden en goederen</th><th>Factuur</th><th></th></tr></thead>
+          <tbody id="dBody"></tbody>
+        </table>
+        <div id="dEmpty" class="empty" hidden><b>Nog geen leveringsbonnen</b>Maak een nieuwe leveringsbon, of klik in het tabblad Facturen bij een factuur op Leveringsbon.</div>
+      </div>
+    </div>
+    <div id="dnEditView" hidden>
+      <div class="work">
+        <div class="form-col">
+          <div class="banner"><span id="dnBannerText"></span><button class="btn sm" id="dnBack">Terug naar de lijst</button></div>
+          <div class="card">
+            <div class="card-h"><h2>Klant</h2><button class="btn ghost sm" id="dnNewKlant">+ Nieuwe klant</button></div>
+            <div id="dnKlantPick"><button class="btn" id="dnKiesKlant">Klant kiezen…</button></div>
+            <div id="dnKlantKaart" class="kaart" hidden>
+              <address id="dnKlantAdres"></address>
+              <div class="row" style="gap:4px;flex-wrap:nowrap"><button class="btn ghost sm" id="dnOtherKlant">Andere klant</button></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>Leveringsbon</h2><span class="hint">Nummer: <span id="dnNrPreview" class="nr"></span></span></div>
+            <div class="row">
+              <label class="field" style="flex:0 1 170px"><span>Datum</span><input id="dnDatum" type="date"></label>
+              <label class="field" style="flex:1 1 160px"><span>Nummer</span><input id="dnNr" type="text" autocomplete="off" spellcheck="false"></label>
+              <div class="field" style="flex:0 0 auto"><span>Taal</span>
+                <div class="seg" id="dnTaalSeg" role="group" aria-label="Taal van de leveringsbon"><button data-taal="NL" aria-pressed="false">NL</button><button data-taal="FR" aria-pressed="false">FR</button><button data-taal="EN" aria-pressed="true">EN</button></div>
+              </div>
+            </div>
+            <div class="row" style="margin-top:8px">
+              <label class="field" style="flex:1 1 200px"><span>Bij factuur (optioneel)</span><input id="dnFactuur" type="text" autocomplete="off" spellcheck="false" placeholder="bv. 202646041"></label>
+            </div>
+            <div id="dnNrMsg" class="hint" style="margin-top:6px"></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>Levering</h2></div>
+            <label class="field"><span>Leveradres</span><textarea id="dnAdres" rows="3" placeholder="Straat en nummer, postcode en plaats, land"></textarea></label>
+            <div class="hint" style="margin-top:4px">Wordt ingevuld met het adres van de klant. Wordt er ergens anders geleverd, pas het dan hier aan.</div>
+            <div class="row" style="margin-top:8px">
+              <label class="field" style="flex:1 1 220px"><span>Transportbedrijf</span><input id="dnTransport" type="text" autocomplete="off"></label>
+              <label class="field" style="flex:1 1 150px"><span>Nummerplaat voertuig</span><input id="dnPlaat" type="text" autocomplete="off"></label>
+            </div>
+            <div class="hint" style="margin-top:6px">Leeg gelaten velden krijgen een lijn op de bon, om met de hand in te vullen.</div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>Paarden en goederen</h2></div>
+            <div class="lines" id="dnLines"></div>
+            <div class="add-row"><button class="btn" id="dnAddHorse">+ Paard of veulen</button><button class="btn" id="dnAddLine" title="Paard, embryo of goed dat niet in de lijst staat">+ Zelf invullen</button></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>Ook geleverd</h2><span class="hint">Documenten en toebehoren, één per regel</span></div>
+            <textarea id="dnMee" rows="3" placeholder="Bv. paspoort&#10;eigendomsbewijs&#10;halster en touw"></textarea>
+            <div class="add-row" id="dnMeeQuick" style="margin-top:8px"><button class="btn sm" data-k="pas">+ Paspoort</button><button class="btn sm" data-k="eig">+ Eigendomsbewijs</button><button class="btn sm" data-k="dek">+ Dekbewijs</button><button class="btn sm" data-k="gez">+ Gezondheidscertificaat</button><button class="btn sm" data-k="hal">+ Halster en touw</button></div>
+            <div class="hint" style="margin-top:6px">Op de bon tekent de ontvanger voor ontvangst van de paarden en van alles wat hier staat.</div>
+            <label class="field" style="margin-top:8px"><span>Opmerking (optioneel, komt op de bon)</span><textarea id="dnOpm" rows="2"></textarea></label>
+          </div>
+          <div class="actions">
+            <div class="sum"><span id="dnSum"></span></div>
+            <div class="btns">
+              <button class="btn ghost" id="dnPdfOnly" title="PDF downloaden zonder op te slaan, werkt ook zonder verbinding">Alleen PDF</button>
+              <button class="btn primary" id="dnSave">Leveringsbon opslaan + PDF</button>
+            </div>
+          </div>
+        </div>
+        <div class="paper-col">
+          <div class="paper-cap"><span>Voorbeeld op A4, zoals de PDF</span><span id="dnPageCount"></span></div>
+          <div class="paper-wrap" id="dnPaper"></div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -932,6 +1015,11 @@ const LBL = {
   NL:{date:"DATUM:",number:"FACTUURNUMMER:",bank:"BANK:",vatOwn:"BTW:",vatCust:"Btw",desc:"Omschrijving",price:"Prijs in EUR",vatCol:"Btw",net:"Netto:",vat:"Btw:",vatRate:r=>`Btw ${r}%:`,total:"TE BETALEN:",page:"Pagina",file:"Factuur",loc:"nl-BE"},
   FR:{date:"DATE :",number:"N° DE FACTURE :",bank:"BANQUE :",vatOwn:"TVA :",vatCust:"TVA",desc:"Description",price:"Prix en EUR",vatCol:"TVA",net:"Net :",vat:"TVA :",vatRate:r=>`TVA ${r} % :`,total:"TOTAL À PAYER :",page:"Page",file:"Facture",loc:"nl-BE"}
 };
+const DNL = {
+  EN:{title:"DELIVERY NOTE",date:"DATE:",number:"DELIVERY NOTE NO.:",invoice:"INVOICE NO.:",addr:"DELIVERY ADDRESS:",plate:"LICENCE PLATE:",carrier:"TRANSPORT COMPANY:",item:"Horse / goods",chip:"Microchip No.",pass:"Passport",yes:"Yes",no:"No",with:"DELIVERED WITH THE FOLLOWING:",remark:"REMARKS:",sigClient:"Receiver",decl:"The undersigned receiver confirms receipt of the horse(s), documents and items listed above.",name:"Name:",sig:"Signature:",copies:"Drawn up in 2 copies: 1 copy for the client, 1 copy for Optimus.",page:"Page",file:"Delivery note",vatCust:"VAT"},
+  NL:{title:"LEVERINGSBON",date:"DATUM:",number:"LEVERINGSBON NR.:",invoice:"FACTUURNUMMER:",addr:"LEVERADRES:",plate:"NUMMERPLAAT:",carrier:"TRANSPORTBEDRIJF:",item:"Paard / goederen",chip:"Chipnummer",pass:"Paspoort",yes:"Ja",no:"Nee",with:"MEEGELEVERD:",remark:"OPMERKINGEN:",sigClient:"Ontvanger",decl:"De ondergetekende ontvanger bevestigt de hierboven vermelde paarden, documenten en goederen ontvangen te hebben.",name:"Naam:",sig:"Handtekening:",copies:"Opgemaakt in 2 exemplaren: 1 exemplaar voor de klant, 1 exemplaar voor Optimus.",page:"Pagina",file:"Leveringsbon",vatCust:"Btw"},
+  FR:{title:"BON DE LIVRAISON",date:"DATE :",number:"N° DE BON :",invoice:"N° DE FACTURE :",addr:"ADRESSE DE LIVRAISON :",plate:"IMMATRICULATION :",carrier:"TRANSPORTEUR :",item:"Cheval / marchandises",chip:"N° de puce",pass:"Passeport",yes:"Oui",no:"Non",with:"LIVRÉ AVEC :",remark:"REMARQUES :",sigClient:"Destinataire",decl:"Le destinataire soussigné confirme avoir reçu les chevaux, documents et biens mentionnés ci-dessus.",name:"Nom :",sig:"Signature :",copies:"Établi en 2 exemplaires : 1 exemplaire pour le client, 1 exemplaire pour Optimus.",page:"Page",file:"Bon de livraison",vatCust:"TVA"}
+};
 const SOORT = {
   veulen:{EN:"Foal",NL:"Veulen",FR:"Poulain"}, fokmerrie:{EN:"Broodmare",NL:"Fokmerrie",FR:"Poulinière"},
   jaarling:{EN:"Yearling",NL:"Jaarling",FR:"Yearling"}, sportpaard:{EN:"Sport horse",NL:"Sportpaard",FR:"Cheval de sport"},
@@ -1041,12 +1129,7 @@ function layout(inv){
   pages.forEach((pr, pi) => {
     if (pi) ops.push({t:"page"});
     if (pi === 0) {
-      const lh = 52 * LOGO_AR, yRule = 20.5 + lh * 520.5 / 696;
-      ops.push({t:"img", x:16, y:20.5, w:52, h:lh});
-      LN(X0, yRule, X1, yRule, lh * 7 / 696);
-      T(b.naam, X1, yRule - 13.8, {style:"bold", align:"right"});
-      T(b.adres, X1, yRule - 8.2, {align:"right"});
-      if (b.website) T(b.website, X1, yRule - 2.6, {align:"right"});
+      letterhead(ops, T, LN, b);
       const y1 = 70.5;
       const vx = Math.max(50, X0 + Math.max(measure(L.date, 10, "bold"), measure(L.number, 10, "bold")) + 3);
       T(L.date, X0, y1, {style:"bold"}); T(fmtDate(inv.datum), vx, y1);
@@ -1089,10 +1172,110 @@ function layout(inv){
   });
   return {ops, pages:n, totals:t};
 }
-function renderPdf(inv){
-  const {ops} = layout(inv);
+/* briefhoofd: identiek op factuur en leveringsbon */
+function letterhead(ops, T, LN, b){
+  const lh = 52 * LOGO_AR, yRule = 20.5 + lh * 520.5 / 696;
+  ops.push({t:"img", x:16, y:20.5, w:52, h:lh});
+  LN(X0, yRule, X1, yRule, lh * 7 / 696);
+  T(b.naam, X1, yRule - 13.8, {style:"bold", align:"right"});
+  T(b.adres, X1, yRule - 8.2, {align:"right"});
+  if (b.website) T(b.website, X1, yRule - 2.6, {align:"right"});
+}
+function layoutDN(d){
+  const L = DNL[d.taal] || DNL.EN, b = {...DEFAULT_BEDRIJF, ...(d.bedrijf || {})}, k = d.klant || {};
+  const CHIP_X = 116, PASS_X = 184, ITEM_W = CHIP_X - X0 - 4, Y_SIG = 220;
+  const ops = [];
+  const T = (s, x, y, o = {}) => ops.push({t:"text", s:String(s ?? ""), x, y, size:o.size || 10, style:o.style || "normal", align:o.align || "left", color:o.color || "#000000"});
+  const LN = (x1, y1, x2, y2, w = 0.5, color = "#000000") => ops.push({t:"line", x1, y1, x2, y2, w, color});
+  const rows = [];
+  (d.regels || []).filter(r => String(r.omschrijving || "").trim() || String(r.chip || "").trim() || String(r.extra || "").trim()).forEach((r, i) => {
+    if (i) rows.push({blank:true});
+    const showPass = !!(String(r.chip || "").trim() || r.paardId || r.paspoort);
+    let tl = wrap(r.omschrijving, ITEM_W, 10, "bold"); if (!tl.length) tl = [""];
+    tl.forEach((s, j) => rows.push({s, style:"bold", chip: j === 0 ? String(r.chip || "").trim() : "", pass: j === 0 && showPass ? !!r.paspoort : undefined}));
+    wrap(r.extra, ITEM_W, 10, "normal").forEach(s => rows.push({s, style:"normal"}));
+  });
+  const mee = String(d.meegeleverd || "").split("\n").map(x => x.trim()).filter(Boolean);
+  if (mee.length) {
+    rows.push({blank:true}); rows.push({blank:true}); rows.push({s:L.with, style:"bold"});
+    mee.forEach(m => wrap(m, X1 - X0 - 5, 10, "normal").forEach((x, j) => rows.push({s:x, style:"normal", bullet:j === 0, indent:true})));
+  }
+  const opm = String(d.opmerking || "").trim();
+  if (opm) { rows.push({blank:true}); rows.push({s:L.remark, style:"bold"}); wrap(opm, X1 - X0, 10, "normal").forEach(x => rows.push({s:x, style:"normal"})); }
+  // pagina 1: kop, klant en leveringsgegevens
+  const y1 = 70.5;
+  const lab1 = [[L.date, fmtDate(d.datum)], [L.number, d.nummer || ""]].concat(d.factuur ? [[L.invoice, d.factuur]] : []);
+  const vx = Math.max(50, X0 + Math.max(...lab1.map(x => measure(x[0], 10, "bold"))) + 3);
+  const kl = [k.naam, k.straat, k.plaats, k.land, k.btw ? `${L.vatCust} ${k.btw}` : ""].filter(x => String(x || "").trim()).flatMap(x => wrap(x, 88, 10, "normal"));
+  const maxW = kl.reduce((m, x) => Math.max(m, measure(x, 10, "normal")), 0);
+  const kx = maxW <= X1 - 143 ? 143 : Math.max(106, X1 - maxW);
+  const dl = [[L.addr, d.leveradres], [L.carrier, d.transport], [L.plate, d.nummerplaat]];
+  const dx = Math.max(vx, X0 + Math.max(...dl.map(x => measure(x[0], 10, "bold"))) + 3);
+  let yd = Math.max(103, y1 + Math.max(lab1.length, kl.length) * LH + 2 * LH);
+  const det = dl.map(([l, v]) => ({l, lines: wrap(v, X1 - dx, 10, "normal")}));
+  const yHead1 = Math.max(125.3, yd + det.reduce((sum, x) => sum + LH * Math.max(1, x.lines.length) + 1.6, 0) + 4);
+  const start1 = yHead1 + 19.7;
+  const pages = []; let i = 0, p = 0;
+  for (;;) {
+    const start = p === 0 ? start1 : Y_BODYC;
+    const capF = Math.max(0, Math.floor((Y_SIG - 9 - start) / LH + 1e-6) + 1);
+    const capA = Math.max(1, Math.floor((Y_PAGE_LIMIT - start) / LH + 1e-6) + 1);
+    const rem = rows.length - i;
+    if (rem <= capF || p > 40) { pages.push(rows.slice(i)); break; }
+    const take = Math.min(capA, rem);
+    pages.push(rows.slice(i, i + take)); i += take; p++;
+    while (rows[i] && rows[i].blank) i++;
+  }
+  const n = pages.length;
+  const head = y => { LN(X0, y, X1, y); T(L.item, X0, y + 5.9, {style:"bold"}); T(L.chip, CHIP_X, y + 5.9, {style:"bold"}); T(L.pass, PASS_X, y + 5.9, {style:"bold", align:"center"}); LN(X0, y + 9.3, X1, y + 9.3); };
+  pages.forEach((pr, pi) => {
+    if (pi) ops.push({t:"page"});
+    if (pi === 0) {
+      letterhead(ops, T, LN, b);
+      T(L.title, X0, 60, {size:13, style:"bold"});
+      lab1.forEach(([l, v], j) => { T(l, X0, y1 + j * LH, {style:"bold"}); T(v, vx, y1 + j * LH); });
+      kl.forEach((x, j) => T(x, kx, y1 + j * LH));
+      let yy = yd;
+      det.forEach(({l, lines}) => {
+        T(l, X0, yy, {style:"bold"});
+        if (lines.length) lines.forEach((x, j) => T(x, dx, yy + j * LH)); else LN(dx, yy + 1, Math.min(X1, dx + 75), yy + 1, 0.2, "#888888");
+        yy += LH * Math.max(1, lines.length) + 1.6;
+      });
+      head(yHead1);
+    } else {
+      T(`${L.number} ${d.nummer || ""}`, X0, 18, {style:"bold"});
+      T(k.naam || "", X1, 18, {align:"right"});
+      head(22.5);
+    }
+    let y = pi === 0 ? start1 : Y_BODYC;
+    for (const r of pr) {
+      if (!r.blank) {
+        if (r.bullet) T("–", X0 + 1, y);
+        if (r.s) T(r.s, r.indent ? X0 + 5 : X0, y, {style:r.style});
+        if (r.chip) T(r.chip, CHIP_X, y);
+        if (r.pass !== undefined) T(r.pass ? L.yes : L.no, PASS_X, y, {align:"center"});
+      }
+      y += LH;
+    }
+    if (pi === n - 1) {
+      const dlines = wrap(L.decl, X1 - X0, 9.5, "italic");
+      dlines.forEach((x, j) => T(x, X0, Y_SIG + j * 4.3, {size:9.5, style:"italic"}));
+      const ys = Y_SIG + dlines.length * 4.3 + 6, w = 95;
+      T(L.sigClient, X0, ys, {style:"bold"});
+      T(L.name, X0, ys + 9); LN(X0 + 24, ys + 10, X0 + w, ys + 10, 0.2, "#777777");
+      T(L.sig, X0, ys + 18); LN(X0, ys + 28, X0 + w, ys + 28, 0.2, "#777777");
+      T(L.copies, X0, 268, {size:8.5, style:"italic"});
+    }
+    T(b.voetLinks, X0, Y_FOOT, {size:8, style:"italic"});
+    T(b.voetRechts, X1, Y_FOOT, {size:8, style:"italic", align:"right"});
+    if (n > 1) T(`${L.page} ${pi + 1}/${n}`, (X0 + X1) / 2, Y_FOOT + 5.5, {size:8, align:"center"});
+  });
+  return {ops, pages:n};
+}
+function renderPdf(inv, layFn = layout, title = null){
+  const {ops} = layFn(inv);
   const doc = newDoc();
-  doc.setProperties({title: `${(LBL[inv.taal] || LBL.EN).file} ${inv.nummer || ""}`, author: (inv.bedrijf || DEFAULT_BEDRIJF).naam, creator: "Optimus Facturatie"});
+  doc.setProperties({title: title || `${(LBL[inv.taal] || LBL.EN).file} ${inv.nummer || ""}`, author: (inv.bedrijf || DEFAULT_BEDRIJF).naam, creator: "Optimus Facturatie"});
   for (const op of ops) {
     if (op.t === "page") { doc.addPage("a4", "portrait"); continue; }
     if (op.t === "img") { doc.addImage(LOGO, "PNG", op.x, op.y, op.w, op.h, "logo", "FAST"); continue; }
@@ -1103,8 +1286,8 @@ function renderPdf(inv){
   return doc;
 }
 const logoImg = new Image(); logoImg.src = LOGO;
-function renderCanvas(inv, host){
-  const {ops, pages} = layout(inv);
+function renderCanvas(inv, host, layFn = layout){
+  const {ops, pages} = layFn(inv);
   const groups = [[]]; ops.forEach(op => { if (op.t === "page") groups.push([]); else groups[groups.length - 1].push(op); });
   while (host.children.length > groups.length) host.lastChild.remove();
   while (host.children.length < groups.length) { const c = document.createElement("canvas"); c.setAttribute("role", "img"); c.setAttribute("aria-label", "Voorbeeld van de factuur"); host.appendChild(c); }
@@ -1135,7 +1318,7 @@ function installPreviewFonts(){
 }
 
 /* ---------- state ---------- */
-const state = {klanten:[], facturen:[], teksten:[], verkopen:[], paarden:[], bedrijf:{}, nummering:{laatste:{}}, instellingen:{standaardBtw:21}, loaded:false};
+const state = {klanten:[], facturen:[], teksten:[], verkopen:[], paarden:[], leveringsbonnen:[], bedrijf:{}, nummering:{laatste:{}}, instellingen:{standaardBtw:21}, loaded:false};
 /* ---------- Microsoft 365: login (MSAL) + opslag als JSON-bestanden in SharePoint ---------- */
 const CONFIG = {
   clientId: "04eb336c-94c0-4933-b685-b9c2114fbefe",                       // Application (client) ID van de Azure-app "Optimus Facturatie"
@@ -1252,7 +1435,7 @@ async function ensureFolder(driveId, path){
   }
   return parent;
 }
-const DATA_FILE = /^(klanten|teksten|verkopen|paarden|instellingen|facturen-\d{4})\.json$/;
+const DATA_FILE = /^(klanten|teksten|verkopen|paarden|instellingen|facturen-\d{4}|leveringsbonnen-\d{4})\.json$/;
 async function listData(){
   let url = `/drives/${loc.driveId}/items/${loc.folderId}/children?$top=200`, out = [];
   while (url) { const j = await gjson(url); out = out.concat(j.value || []); url = j["@odata.nextLink"] || null; }
@@ -1323,6 +1506,7 @@ function rebuildState(){
   state.nummering = inst.nummering || {laatste:{}};
   state.instellingen = {standaardBtw:21, ...(inst.algemeen || {})};
   state.facturen = Object.keys(files).filter(n => /^facturen-\d{4}\.json$/.test(n)).flatMap(listOf);
+  state.leveringsbonnen = Object.keys(files).filter(n => /^leveringsbonnen-\d{4}\.json$/.test(n)).flatMap(listOf);
   for (const it of queue()) {
     if (it.type === "klant" && !state.klanten.some(k => k.id === it.id)) state.klanten.push({id:it.id, ...it.v, wachtrij:true});
     if (it.type === "factuur") state.facturen.push({...it.doc, id:"q-" + it.qid, qid:it.qid, wachtrij:true, fout:it.fout || ""});
@@ -2052,10 +2236,11 @@ function renderFacturen(){
     const isLast = !hist && (lastByYear[f.jaar]?.id === f.id || f.volgnr == null);
     const sub = wq ? (f.fout ? "Niet in SharePoint gezet: " + f.fout : "gemaakt zonder verbinding") : hist ? [f.betaalstatus, f.peppol, f.notitie].filter(Boolean).join(" · ") : `${f.taal || ""}${(f.teksten || []).length ? " · " + f.teksten.length + " extra tekst" + (f.teksten.length > 1 ? "en" : "") : ""}`;
     const open = (f.pdf?.id || f.pdfId || f.pdfPad) ? `<button class="btn sm ghost" data-act="open">Openen</button> ` : (hist ? `<button class="btn sm ghost" data-act="link" title="Een PDF uit SharePoint aan deze factuur koppelen">PDF koppelen</button> ` : "");
-    const acts = wq ? `<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="qnr">Nummer wijzigen</button> <button class="btn sm ghost danger" data-act="qdel">Verwijderen</button>` : hist ? `${open}<button class="btn sm" data-act="copy">Kopiëren</button>` : `${open}<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="copy">Kopiëren</button> <button class="btn sm ghost" data-act="edit">Aanpassen</button>${isLast ? ` <button class="btn sm ghost danger" data-act="del" title="Alleen de laatste factuur van het jaar kan weg">Verwijderen</button>` : ""}`;
+    const dnBtn = ` <button class="btn sm ghost" data-act="dn" title="Leveringsbon maken voor deze factuur">Leveringsbon</button>`;
+    const acts = wq ? `<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="qnr">Nummer wijzigen</button> <button class="btn sm ghost danger" data-act="qdel">Verwijderen</button>` : hist ? `${open}<button class="btn sm" data-act="copy">Kopiëren</button>${dnBtn}` : `${open}<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="copy">Kopiëren</button>${dnBtn} <button class="btn sm ghost" data-act="edit">Aanpassen</button>${isLast ? ` <button class="btn sm ghost danger" data-act="del" title="Alleen de laatste factuur van het jaar kan weg">Verwijderen</button>` : ""}`;
     return `<tr data-id="${esc(f.id)}"><td class="nr">${esc(f.nummer)}${hist ? `<div class="sub">historiek</div>` : ""}${wq ? `<div class="sub${f.fout ? " bad" : ""}">${f.fout ? "niet in SharePoint" : "wacht op SharePoint"}</div>` : ""}</td><td>${esc(fmtDate(f.datum))}</td>
       <td>${esc(f.klant?.naam || "")}<div class="sub">${esc(f.klant?.land || "")}</div></td>
-      <td>${esc(omschr)}<div class="sub${wq && f.fout ? " bad" : ""}">${esc(sub)}</div></td>
+      <td>${esc(omschr)}<div class="sub${wq && f.fout ? " bad" : ""}">${esc(sub + dnLabel(f))}</div></td>
       <td class="num">€ ${eur(f.totaal ?? f.netto)}${typeof f.netto === "number" ? `<div class="sub">netto ${eur(f.netto)}</div>` : ""}</td>
       <td class="acts">${acts}</td></tr>`;
   }).join("");
@@ -2073,6 +2258,7 @@ $("#fBody").addEventListener("click", async e => {
   const f = state.facturen.find(x => x.id === b.closest("tr").dataset.id); if (!f) return;
   if (b.dataset.act === "open" || b.dataset.act === "openpad") return openFactuurPdf(f);
   if (b.dataset.act === "link") return pickPdf(f, false);
+  if (b.dataset.act === "dn") return startDnFromFactuur(f);
   if (b.dataset.act === "qnr") {
     const v = await askText(`Nummer van factuur ${f.nummer} wijzigen`, "Nieuw factuurnummer", f.nummer, "Wijzigen"); if (!v || v === f.nummer) return;
     const p = parseNr(v, f.datum);
@@ -2339,15 +2525,375 @@ $("#saveDefaults").addEventListener("click", async () => {
 });
 
 /* ---------- tabs ---------- */
+/* ---------- leveringsbonnen ---------- */
+const DN_KEY = "optimus-lb-concept-v1";
+const dnFile = jaar => `leveringsbonnen-${jaar}.json`;
+const dnNr = (y, sq) => `DN ${y}-${pad(sq, 3)}`;
+const blankDnLine = (paspoort = false) => ({omschrijving:"", chip:"", paspoort, extra:"", paardId:null, paardAuto:false});
+function blankDn(){ return {editId:null, nummer:null, klantId:null, klantSnap:null, datum:todayISO(), taal:"EN", nrManual:"", factuur:"", adres:"", plaat:"", transport:"", regels:[blankDnLine()], mee:"", opm:""}; }
+let dn = ls.get(DN_KEY) || null;
+function saveDn(){ if (dn) ls.set(DN_KEY, dn); else { try { localStorage.removeItem(DN_KEY); } catch {} } }
+function dnKlant(){ const k = dn && klantById(dn.klantId); return k ? snapKlant(k) : (dn?.klantSnap || null); }
+function dnNextSeq(y){ let max = 0; for (const d of state.leveringsbonnen) if (Number(d.jaar) === y && Number(d.volgnr) > max) max = Number(d.volgnr); return max + 1; }
+function dnParse(nr, datum){
+  const t = String(nr || "").trim().replace(/\s+/g, " "), m = t.match(/^DN ?(\d{4})[-\/ ](\d{1,4})$/i);
+  if (m) return {nummer:dnNr(m[1], +m[2]), jaar:+m[1], volgnr:+m[2], id:`${m[1]}-${pad(+m[2], 3)}`};
+  const jaar = Number(String(datum || "").slice(0, 4)) || new Date().getFullYear();
+  return {nummer:t, jaar, volgnr:null, id:"x-" + t.replace(/[^A-Za-z0-9_\-.]/g, "_").slice(0, 180)};
+}
+function dnConflict(p, exceptId){ return state.leveringsbonnen.find(d => d.id !== exceptId && Number(d.jaar) === p.jaar && (d.nummer === p.nummer || (p.volgnr != null && Number(d.volgnr) === p.volgnr))) || null; }
+function dnNumberInfo(){
+  const man = String(dn.nrManual || "").trim();
+  if (man && !(dn.editId && man === dn.nummer)) { const p = dnParse(man, dn.datum); return {nummer:p.nummer, p, manual:true, conflict:dnConflict(p, dn.editId)}; }
+  if (dn.editId) return {nummer:dn.nummer || "", manual:false};
+  const y = Number(String(dn.datum || todayISO()).slice(0, 4));
+  return {nummer:state.loaded ? dnNr(y, dnNextSeq(y)) : "", manual:false};
+}
+function dnHorseFill(r, p, taal, datum, typeKey){
+  const t = SOORT[typeKey || horseType(p, datum)] || SOORT.paard;
+  r.omschrijving = `${t[taal] || t.EN}: ${p.naam || ""}`.trim();
+  r.chip = p.chip || "";
+  r.extra = p.geboortedatum ? (HDESC[taal] || HDESC.EN)({geboortedatum:p.geboortedatum})[1] : "";
+  r.paardId = p.id; r.paardType = typeKey || null; r.paardAuto = true; r.paspoort = true;
+  return r;
+}
+function dnRelang(){ for (const r of dn.regels) if (r.paardId && r.paardAuto) { const p = state.paarden.find(x => x.id === r.paardId); if (p) { const pas = r.paspoort; dnHorseFill(r, p, dn.taal, dn.datum, r.paardType); r.paspoort = pas; } } }
+function horseInText(t){ const n = norm(t); if (!n) return null; return state.paarden.filter(p => p.naam && n.includes(norm(p.naam))).sort((a, b) => b.naam.length - a.naam.length)[0] || null; }
+function dnDoc(){
+  const fnr = String(dn.factuur || "").trim();
+  return {
+    taal:dn.taal, datum:dn.datum, klantId:dn.klantId || null, klant:dnKlant() || {},
+    leveradres:String(dn.adres || "").trim(), nummerplaat:String(dn.plaat || "").trim(), transport:String(dn.transport || "").trim(),
+    regels:dn.regels.filter(r => r.omschrijving.trim() || r.chip.trim() || r.extra.trim()).map(r => ({omschrijving:r.omschrijving.trim(), chip:r.chip.trim(), paspoort:!!r.paspoort, extra:r.extra.replace(/\s+$/, ""), ...(r.paardId ? {paardId:r.paardId} : {})})),
+    meegeleverd:String(dn.mee || "").replace(/\s+$/, ""), opmerking:String(dn.opm || "").replace(/\s+$/, ""),
+    factuur:fnr, factuurId:(fnr && state.facturen.find(f => f.nummer === fnr && !f.wachtrij)?.id) || null,
+    bedrijf:dn.editId ? (dn.bedrijfSnap || bedrijf()) : bedrijf()
+  };
+}
+function dnValidate(doc){
+  const errs = [];
+  if (!doc.klant?.naam) errs.push("Kies of maak een klant.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(doc.datum || "")) errs.push("Vul een geldige datum in.");
+  if (!doc.regels.length) errs.push("Voeg ten minste één paard of regel toe.");
+  const ni = dnNumberInfo();
+  if (ni.manual && ni.conflict) errs.push(`Nummer ${ni.nummer} is al gebruikt door leveringsbon ${ni.conflict.nummer}.`);
+  if (ni.manual && !/^[A-Za-z0-9_\-. \/]+$/.test(ni.nummer)) errs.push("Het nummer mag alleen cijfers, letters, spaties en - . / bevatten.");
+  return errs;
+}
+const dnTitle = d => `${(DNL[d.taal] || DNL.EN).file} ${d.nummer || ""}`;
+const dnPdfName = d => `${(DNL[d.taal] || DNL.EN).file} ${d.nummer || "concept"} - ${String(d.klant?.naam || "").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim()}.pdf`;
+function dnFromFactuur(f){
+  const k = f.klantId ? klantById(f.klantId) : null, kk = k ? snapKlant(k) : (f.klant || {});
+  const d = blankDn();
+  d.klantId = k ? k.id : null; d.klantSnap = f.klant || null; d.taal = f.taal || k?.taal || "EN"; d.factuur = f.wachtrij ? "" : (f.nummer || "");
+  d.adres = [kk.straat, kk.plaats, kk.land].filter(Boolean).join("\n");
+  d.regels = [];
+  const chipRe = /^(chipnummer|microchip no\.?|n° de puce)\s*:?\s*/i;
+  for (const r of (f.historiek ? [{titel:f.omschrijving || "", omschrijving:""}] : (f.regels || []))) {
+    const p = (r.paardId && state.paarden.find(x => x.id === r.paardId)) || horseInText(r.titel);
+    if (p) { d.regels.push(dnHorseFill(blankDnLine(true), p, d.taal, d.datum, r.paardType)); continue; }
+    const lines = String(r.omschrijving || "").split("\n"), chipLine = lines.find(l => chipRe.test(l.trim()));
+    if (!String(r.titel || "").trim() && !chipLine) continue;
+    d.regels.push({omschrijving:r.titel || "", chip:chipLine ? chipLine.trim().replace(chipRe, "") : "", paspoort:!!chipLine, extra:lines.filter(l => l !== chipLine).join("\n").trim(), paardId:null, paardAuto:false});
+  }
+  if (!d.regels.length) d.regels.push(blankDnLine());
+  return d;
+}
+function dnFromRecord(d, edit){
+  const out = {editId:edit ? d.id : null, nummer:edit ? d.nummer : null, nrManual:edit ? d.nummer : "", bedrijfSnap:edit ? (d.bedrijf || null) : null,
+    klantId:d.klantId || null, klantSnap:d.klant || null, datum:edit ? d.datum : todayISO(), taal:d.taal || "EN", factuur:d.factuur || "",
+    adres:d.leveradres || "", plaat:d.nummerplaat || "", transport:d.transport || "",
+    regels:(d.regels || []).map(r => ({omschrijving:r.omschrijving || "", chip:r.chip || "", paspoort:r.paspoort !== false, extra:r.extra || "", paardId:r.paardId || null, paardAuto:false})),
+    mee:d.meegeleverd || "", opm:d.opmerking || ""};
+  if (!out.regels.length) out.regels.push(blankDnLine());
+  return out;
+}
+function dnDirty(){ return !!dn && !!(dn.klantId || dn.klantSnap || dn.regels.some(r => r.omschrijving.trim() || r.chip.trim()) || String(dn.adres || "").trim() || String(dn.mee || "").trim()); }
+/* opslag */
+function dnCreate(doc, p){
+  const year = p ? p.jaar : Number(doc.datum.slice(0, 4));
+  return mutate(dnFile(year), d => {
+    const it = itemsOf(d); let id, nb;
+    if (p) {
+      const c = Object.values(it).find(v => v.nummer === p.nummer || (p.volgnr != null && Number(v.volgnr) === p.volgnr));
+      if (c) throw new Error(`nummer ${p.nummer} is al gebruikt door leveringsbon ${c.nummer}`);
+      id = p.id; nb = {nummer:p.nummer, jaar:p.jaar, volgnr:p.volgnr, handmatigNummer:true};
+    } else {
+      let max = 0; for (const v of Object.values(it)) if (Number(v.volgnr) > max) max = Number(v.volgnr);
+      const sq = max + 1; id = `${year}-${pad(sq, 3)}`; nb = {nummer:dnNr(year, sq), jaar:year, volgnr:sq};
+    }
+    const rec = {...doc, ...nb, aangemaakt:new Date().toISOString(), aangemaaktDoor:userLabel()};
+    it[id] = rec; return {id, ...rec};
+  });
+}
+async function dnUpdate(old, doc, p){
+  const base = {...old, ...doc, gewijzigdOp:new Date().toISOString(), gewijzigdDoor:userLabel()}; delete base.id;
+  if (!p || p.nummer === old.nummer) return mutate(dnFile(old.jaar), d => { itemsOf(d)[old.id] = base; return {id:old.id, ...base}; });
+  const nb = {...base, nummer:p.nummer, jaar:p.jaar, volgnr:p.volgnr, handmatigNummer:true};
+  const ins = d => {
+    const it = itemsOf(d), c = Object.entries(it).find(([kk, v]) => kk !== old.id && (v.nummer === p.nummer || (p.volgnr != null && Number(v.volgnr) === p.volgnr)));
+    if (c) throw new Error(`nummer ${p.nummer} is al gebruikt door leveringsbon ${c[1].nummer}`);
+    it[p.id] = nb;
+  };
+  if (Number(old.jaar) === p.jaar) return mutate(dnFile(p.jaar), d => { ins(d); if (p.id !== old.id) delete itemsOf(d)[old.id]; return {id:p.id, ...nb}; });
+  await mutate(dnFile(p.jaar), d => { ins(d); });
+  await mutate(dnFile(old.jaar), d => { delete itemsOf(d)[old.id]; });
+  return {id:p.id, ...nb};
+}
+const dnPdfFolders = {};
+async function dnStorePdf(saved, download = true){
+  if (!pdfReady) { toast("De PDF-module is nog niet geladen."); return null; }
+  const blob = renderPdf(saved, layoutDN, dnTitle(saved)).output("blob");
+  if (download) localDownload(dnPdfName(saved), blob);
+  try {
+    const y = String(saved.jaar);
+    if (!dnPdfFolders[y]) dnPdfFolders[y] = (await ensureFolder(loc.driveId, `${CONFIG.folderPath}/PDF/Leveringsbonnen/${y}`)).id;
+    const res = await gfetch(`/drives/${loc.driveId}/items/${dnPdfFolders[y]}:/${encodeURIComponent(dnPdfName(saved))}:/content?@microsoft.graph.conflictBehavior=replace`, {method:"PUT", headers:{"Content-Type":"application/pdf"}, body:blob});
+    if (!res.ok) throw await gerr(res);
+    const it = await res.json(), pdf = {id:it.id, name:it.name, webUrl:it.webUrl};
+    if (saved.pdf?.id && saved.pdf.id !== pdf.id) gfetch(`/drives/${loc.driveId}/items/${saved.pdf.id}`, {method:"DELETE"}).catch(() => {});
+    await mutate(dnFile(saved.jaar), d => { const x = itemsOf(d)[saved.id]; if (x) x.pdf = pdf; });
+    return pdf;
+  } catch (e) { console.error(e); toast((download ? "De PDF is gedownload, maar b" : "B") + "ewaren van de PDF in SharePoint lukte niet: " + e.message, 6000); return null; }
+}
+async function openDnPdf(d){
+  if (!online) return toast("Niet verbonden met SharePoint.");
+  const w = window.open("", "_blank");
+  try {
+    const it = d.pdf?.id ? await getItem(`/drives/${loc.driveId}/items/${d.pdf.id}`) : null;
+    if (it) { if (w) { w.opener = null; w.location.href = it.webUrl; } else window.open(it.webUrl, "_blank", "noopener"); return; }
+    if (w) w.close();
+    toast("De PDF staat niet meer in SharePoint. Klik op Aanpassen en sla opnieuw op om ze opnieuw te bewaren.", 7000);
+  } catch (e) { if (w) w.close(); toast("De PDF openen is niet gelukt: " + e.message, 6000); }
+}
+/* scherm */
+function dnShow(){
+  const editing = !!dn;
+  $("#dnListView").hidden = editing; $("#dnEditView").hidden = !editing;
+  if (editing) { renderDnForm(); dnSchedule(); }
+}
+function openDn(d){ dn = d; saveDn(); switchTab("leveringsbonnen"); dnShow(); window.scrollTo({top:0}); }
+function closeDn(){ dn = null; saveDn(); dnShow(); renderLeveringsbonnen(); }
+function renderDnKlant(){
+  const k = dnKlant();
+  $("#dnKlantPick").hidden = !!k; $("#dnKlantKaart").hidden = !k;
+  if (k) $("#dnKlantAdres").innerHTML = `<b>${esc(k.naam)}</b><br>${[k.straat, k.plaats, k.land].filter(Boolean).map(esc).join("<br>")}${k.btw ? `<br><span class="hint">Btw ${esc(k.btw)}</span>` : ""}`;
+}
+function renderDnForm(){
+  if (!dn) return;
+  $("#dnBannerText").innerHTML = dn.editId ? `Je past leveringsbon <b>${esc(dn.nummer)}</b> aan.` : "Nieuwe leveringsbon";
+  renderDnKlant();
+  const setV = (sel, v) => { const el = $(sel); if (document.activeElement !== el) el.value = v ?? ""; };
+  setV("#dnDatum", dn.datum); setV("#dnNr", dn.nrManual); setV("#dnFactuur", dn.factuur); setV("#dnAdres", dn.adres);
+  setV("#dnPlaat", dn.plaat); setV("#dnTransport", dn.transport); setV("#dnMee", dn.mee); setV("#dnOpm", dn.opm);
+  document.querySelectorAll("#dnTaalSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.taal === dn.taal)));
+  renderDnLines(); renderDnMeta();
+  $("#dnSave").textContent = dn.editId ? "Wijzigingen opslaan + PDF" : "Leveringsbon opslaan + PDF";
+}
+function renderDnMeta(){
+  if (!dn) return;
+  const info = dnNumberInfo();
+  $("#dnNrPreview").textContent = info.nummer || "–";
+  $("#dnNr").placeholder = dn.editId ? (dn.nummer || "") : (info.nummer && !info.manual ? `${info.nummer} (automatisch)` : "automatisch");
+  let h = info.manual ? (info.conflict ? `Dit nummer is al gebruikt door leveringsbon ${info.conflict.nummer}.` : "Zelf ingevuld nummer.") : (dn.editId ? "Typ een ander nummer om het nummer te wijzigen." : "Leeg laten voor het automatische nummer.");
+  const fnr = String(dn.factuur || "").trim();
+  if (fnr) { const ff = state.facturen.find(x => x.nummer === fnr); h += ff ? ` Hoort bij factuur ${fnr} (${ff.klant?.naam || ""}).` : ` Factuur ${fnr} staat niet in de app; het nummer komt wel op de bon.`; }
+  const m = $("#dnNrMsg"); m.textContent = h; m.className = info.manual && info.conflict ? "hint bad" : "hint";
+}
+function renderDnLines(){
+  const host = $("#dnLines"); host.innerHTML = "";
+  dn.regels.forEach((r, i) => {
+    const el = document.createElement("div"); el.className = "line"; el.dataset.i = i;
+    el.innerHTML = `
+      <div class="line-head"><span class="line-no">${i + 1}</span>
+        <input type="text" class="d-oms" id="d-oms-${i}" aria-label="Paard of goed ${i + 1}" placeholder="Bv. Embryo: … of Draagmerrie: Dova Tivoli" value="${esc(r.omschrijving)}">
+        <button class="btn ghost sm" data-act="horse" title="Paard of veulen kiezen voor deze regel">Paard</button>
+        <button class="icon-btn" data-act="up" title="Omhoog" aria-label="Regel omhoog" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="icon-btn" data-act="down" title="Omlaag" aria-label="Regel omlaag" ${i === dn.regels.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="icon-btn del" data-act="del" title="Verwijderen" aria-label="Regel verwijderen">✕</button></div>
+      <div class="dn-nums"><label class="field"><span>Chipnummer</span><input type="text" class="d-chip" id="d-chip-${i}" inputmode="numeric" value="${esc(r.chip)}"></label>
+        <label class="check"><input type="checkbox" class="d-pas" id="d-pas-${i}" ${r.paspoort ? "checked" : ""}> Paspoort meegeleverd</label></div>
+      <textarea class="d-extra" id="d-extra-${i}" rows="${Math.max(1, (r.extra.match(/\n/g) || []).length + 1)}" aria-label="Extra info ${i + 1}" placeholder="Extra info (optioneel), bv. geboortedatum of afstamming">${esc(r.extra)}</textarea>`;
+    host.appendChild(el);
+  });
+}
+let dnT;
+function dnSchedule(){ clearTimeout(dnT); dnT = setTimeout(dnPreview, 90); }
+function dnPreview(){
+  if (!dn || $("#dnEditView").hidden) return;
+  saveDn();
+  const doc = dnDoc(); doc.nummer = dnNumberInfo().nummer;
+  if (pdfReady && !$("#tab-leveringsbonnen").hidden) { try { const n = renderCanvas(doc, $("#dnPaper"), layoutDN); $("#dnPageCount").textContent = n > 1 ? `${n} pagina’s` : "1 pagina"; } catch (e) { console.error(e); } }
+  const c = doc.regels.length; $("#dnSum").textContent = `${c} ${c === 1 ? "regel" : "regels"}`;
+  renderDnMeta();
+}
+function dnRefresh(){ if (dn && !$("#dnEditView").hidden) { renderDnKlant(); dnSchedule(); } }
+function pickKlant(onPick){
+  let q = "", idx = 0, list = [];
+  dialog.innerHTML = `<h3>Klant kiezen</h3><input id="kp-q" type="text" placeholder="Zoek op naam, gemeente of land" autocomplete="off"><ul class="hlist" id="kp-list" role="listbox"></ul>
+    <div class="foot"><button class="btn ghost" id="kp-new">+ Nieuwe klant</button><button class="btn ghost" id="kp-cancel">Annuleren</button></div>`;
+  const paint = () => {
+    const nq = norm(q);
+    list = [...state.klanten].filter(k => !nq || norm(`${k.naam} ${k.plaats} ${k.land}`).includes(nq)).sort((a, b) => String(a.naam).localeCompare(String(b.naam))).slice(0, 80);
+    idx = Math.min(idx, Math.max(0, list.length - 1));
+    $("#kp-list").innerHTML = list.length ? list.map((k, i) => `<li role="option" data-i="${i}" aria-selected="${i === idx}"><span><b>${esc(k.naam)}</b><br><small>${esc([k.plaats, k.land].filter(Boolean).join(", "))}</small></span><small>${esc(k.taal || "EN")}</small></li>`).join("") : `<li style="cursor:default"><small>Geen klanten gevonden.</small></li>`;
+  };
+  modalDone = null; modal.hidden = false; paint(); setTimeout(() => $("#kp-q")?.focus(), 20);
+  const choose = i => { const k = list[i]; if (!k) return; closeModal(true); onPick(k); };
+  $("#kp-q").addEventListener("input", e => { q = e.target.value; idx = 0; paint(); });
+  $("#kp-q").addEventListener("keydown", e => { if (e.key === "ArrowDown") { idx = Math.min(list.length - 1, idx + 1); paint(); e.preventDefault(); } if (e.key === "ArrowUp") { idx = Math.max(0, idx - 1); paint(); e.preventDefault(); } if (e.key === "Enter") { e.preventDefault(); choose(idx); } });
+  $("#kp-list").addEventListener("click", e => { const li = e.target.closest("li[data-i]"); if (li) choose(+li.dataset.i); });
+  $("#kp-cancel").addEventListener("click", () => closeModal(undefined));
+  $("#kp-new").addEventListener("click", () => { closeModal(undefined); openKlantModal(null, {naam:q}, k => onPick(k)); });
+}
+function dnSetKlant(k){
+  if (!dn) return;
+  dn.klantId = k.id; dn.klantSnap = snapKlant(k);
+  if (k.taal && k.taal !== dn.taal) { dn.taal = k.taal; dnRelang(); }
+  if (!String(dn.adres || "").trim()) dn.adres = [k.straat, k.plaats, k.land].filter(Boolean).join("\n");
+  renderDnForm(); dnSchedule();
+}
+async function dnSaveAction(){
+  if (!dn) return;
+  const doc = dnDoc(), errs = dnValidate(doc);
+  if (errs.length) { toast(errs.join(" "), 7000); return; }
+  if (!online) { toast("Niet verbonden met SharePoint: de leveringsbon is niet opgeslagen. Met Alleen PDF kun je toch een PDF maken.", 8000); return; }
+  const btn = $("#dnSave"); btn.disabled = true; btn.textContent = "Bezig…";
+  try {
+    const info = dnNumberInfo(); let saved;
+    if (dn.editId) {
+      const old = state.leveringsbonnen.find(x => x.id === dn.editId);
+      if (!old) throw new Error("deze leveringsbon bestaat niet meer");
+      saved = await dnUpdate(old, doc, info.manual ? info.p : null);
+      toast(`Leveringsbon ${saved.nummer} bijgewerkt`);
+    } else {
+      saved = await dnCreate(doc, info.manual ? info.p : null);
+      toast(`Leveringsbon ${saved.nummer} aangemaakt`);
+    }
+    closeDn();
+    await dnStorePdf(saved);
+  } catch (e) { console.error(e); toast("Niet gelukt: " + (e?.message || e), 7000); }
+  finally { btn.disabled = false; btn.textContent = dn?.editId ? "Wijzigingen opslaan + PDF" : "Leveringsbon opslaan + PDF"; }
+}
+async function startDnFromFactuur(f){
+  if (dnDirty() && !(await confirmBox("Huidige leveringsbon vervangen?", "Er staat nog een leveringsbon in opmaak. Die invoer wordt vervangen.", "Vervangen"))) return;
+  openDn(dnFromFactuur(f));
+  toast(`Leveringsbon voor factuur ${f.nummer}: controleer en vul aan`, 5000);
+}
+function dnLabel(f){
+  if (f.wachtrij) return "";
+  const ds = state.leveringsbonnen.filter(d => d.factuurId === f.id || (d.factuur && d.factuur === f.nummer));
+  return ds.length ? " · leveringsbon " + ds.map(d => d.nummer).join(", ") : "";
+}
+let dJaarInit = false;
+function renderLeveringsbonnen(){
+  const all = state.leveringsbonnen;
+  const years = [...new Set(all.map(d => Number(d.jaar)))].sort((a, b) => b - a);
+  const sel = $("#dJaar"), cur = sel.value;
+  sel.innerHTML = `<option value="">Alle jaren</option>` + years.map(y => `<option ${String(y) === cur ? "selected" : ""}>${y}</option>`).join("");
+  if (!dJaarInit && years.length) { sel.value = String(years[0]); dJaarInit = true; }
+  const q = norm($("#dZoek").value), y = sel.value;
+  const list = all.filter(d => (!y || String(d.jaar) === y) && (!q || norm(`${d.nummer} ${d.klant?.naam} ${d.factuur} ${(d.regels || []).map(r => r.omschrijving + " " + r.chip).join(" ")}`).includes(q)))
+    .sort((a, b) => (b.jaar - a.jaar) || ((b.volgnr ?? -1) - (a.volgnr ?? -1)) || String(b.datum).localeCompare(String(a.datum)));
+  const last = {}; all.forEach(d => { if (d.volgnr == null) return; if (!last[d.jaar] || d.volgnr > last[d.jaar].volgnr) last[d.jaar] = d; });
+  $("#dBody").innerHTML = list.map(d => {
+    const canDel = last[d.jaar]?.id === d.id || d.volgnr == null;
+    return `<tr data-id="${esc(d.id)}"><td class="nr">${esc(d.nummer)}</td><td>${esc(fmtDate(d.datum))}</td>
+      <td>${esc(d.klant?.naam || "")}<div class="sub">${esc(d.klant?.land || "")}</div></td>
+      <td>${esc((d.regels || []).map(r => r.omschrijving).filter(Boolean).join(" · "))}<div class="sub">${esc([d.transport, d.nummerplaat].filter(Boolean).join(" · "))}</div></td>
+      <td>${esc(d.factuur || "")}</td>
+      <td class="acts">${d.pdf?.id ? `<button class="btn sm ghost" data-act="open">Openen</button> ` : ""}<button class="btn sm" data-act="pdf">PDF</button> <button class="btn sm" data-act="copy">Kopiëren</button> <button class="btn sm ghost" data-act="edit">Aanpassen</button>${canDel ? ` <button class="btn sm ghost danger" data-act="del" title="Alleen de laatste leveringsbon van het jaar kan weg">Verwijderen</button>` : ""}</td></tr>`;
+  }).join("");
+  $("#dEmpty").hidden = !!list.length;
+  $("#dSum").textContent = list.length ? `${list.length} ${list.length === 1 ? "leveringsbon" : "leveringsbonnen"}` : "";
+}
+$("#dZoek").addEventListener("input", renderLeveringsbonnen); $("#dJaar").addEventListener("change", renderLeveringsbonnen);
+$("#dNew").addEventListener("click", () => openDn(blankDn()));
+$("#dBody").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-act]"); if (!b) return;
+  const d = state.leveringsbonnen.find(x => x.id === b.closest("tr").dataset.id); if (!d) return;
+  const act = b.dataset.act;
+  if (act === "pdf") { if (!pdfReady) return toast("De PDF-module is nog niet geladen."); try { localDownload(dnPdfName(d), renderPdf(d, layoutDN, dnTitle(d)).output("blob")); } catch (err) { console.error(err); toast("De PDF kon niet gemaakt worden."); } return; }
+  if (act === "open") return openDnPdf(d);
+  if (act === "edit" || act === "copy") {
+    if (dnDirty() && !(await confirmBox("Huidige leveringsbon vervangen?", "Er staat nog een leveringsbon in opmaak. Die invoer wordt vervangen.", "Vervangen"))) return;
+    openDn(dnFromRecord(d, act === "edit"));
+    toast(act === "edit" ? `Leveringsbon ${d.nummer} geopend om aan te passen` : `Kopie van ${d.nummer}: pas aan en sla op als nieuwe leveringsbon`);
+    return;
+  }
+  if (act === "del") {
+    if (!(await confirmBox(`Leveringsbon ${d.nummer} verwijderen?`, "De leveringsbon en haar PDF in SharePoint worden verwijderd. Het nummer komt weer vrij.", "Verwijderen", true))) return;
+    try {
+      await mutate(dnFile(d.jaar), x => { delete itemsOf(x)[d.id]; });
+      if (d.pdf?.id) gfetch(`/drives/${loc.driveId}/items/${d.pdf.id}`, {method:"DELETE"}).catch(() => {});
+      toast(`Leveringsbon ${d.nummer} verwijderd`);
+    } catch (err) { toast("Verwijderen is niet gelukt: " + err.message); }
+  }
+});
+const dnBind = (sel, key) => $(sel).addEventListener("input", e => { if (!dn) return; dn[key] = e.target.value; dnSchedule(); });
+dnBind("#dnDatum", "datum"); dnBind("#dnNr", "nrManual"); dnBind("#dnFactuur", "factuur"); dnBind("#dnAdres", "adres");
+dnBind("#dnPlaat", "plaat"); dnBind("#dnTransport", "transport"); dnBind("#dnMee", "mee"); dnBind("#dnOpm", "opm");
+$("#dnTaalSeg").addEventListener("click", e => { const b = e.target.closest("button[data-taal]"); if (!b || !dn) return; dn.taal = b.dataset.taal; dnRelang(); renderDnForm(); dnSchedule(); });
+const dnLineEdit = e => {
+  const el = e.target, line = el.closest(".line"); if (!line || !dn) return;
+  const r = dn.regels[+line.dataset.i]; if (!r) return;
+  if (el.classList.contains("d-oms")) { r.omschrijving = el.value; r.paardAuto = false; }
+  else if (el.classList.contains("d-chip")) { r.chip = el.value; r.paardAuto = false; }
+  else if (el.classList.contains("d-extra")) { r.extra = el.value; r.paardAuto = false; }
+  else if (el.classList.contains("d-pas")) r.paspoort = el.checked;
+  else return;
+  dnSchedule();
+};
+$("#dnLines").addEventListener("input", dnLineEdit); $("#dnLines").addEventListener("change", dnLineEdit);
+$("#dnLines").addEventListener("click", e => {
+  const b = e.target.closest("button[data-act]"); if (!b || !dn) return;
+  const i = +b.closest(".line").dataset.i, act = b.dataset.act;
+  if (act === "horse") return pickHorse(p => { if (!dn.regels[i]) return; dnHorseFill(dn.regels[i], p, dn.taal, dn.datum); renderDnLines(); dnSchedule(); });
+  if (act === "del") { dn.regels.splice(i, 1); if (!dn.regels.length) dn.regels.push(blankDnLine()); }
+  if (act === "up" && i > 0) [dn.regels[i - 1], dn.regels[i]] = [dn.regels[i], dn.regels[i - 1]];
+  if (act === "down" && i < dn.regels.length - 1) [dn.regels[i + 1], dn.regels[i]] = [dn.regels[i], dn.regels[i + 1]];
+  renderDnLines(); dnSchedule();
+});
+$("#dnAddLine").addEventListener("click", () => { if (!dn) return; dn.regels.push(blankDnLine()); renderDnLines(); dnSchedule(); setTimeout(() => $(`#d-oms-${dn.regels.length - 1}`)?.focus(), 20); });
+$("#dnAddHorse").addEventListener("click", () => pickHorse(p => {
+  if (!dn) return;
+  const lastR = dn.regels[dn.regels.length - 1], empty = lastR && !lastR.omschrijving.trim() && !lastR.chip.trim() && !lastR.extra.trim();
+  if (!empty) dn.regels.push(blankDnLine(true));
+  dnHorseFill(dn.regels[dn.regels.length - 1], p, dn.taal, dn.datum); renderDnLines(); dnSchedule();
+}));
+$("#dnKiesKlant").addEventListener("click", () => pickKlant(dnSetKlant));
+$("#dnNewKlant").addEventListener("click", () => openKlantModal(null, {}, dnSetKlant));
+$("#dnOtherKlant").addEventListener("click", () => { if (!dn) return; dn.klantId = null; dn.klantSnap = null; renderDnForm(); dnSchedule(); pickKlant(dnSetKlant); });
+$("#dnBack").addEventListener("click", async () => { if (dnDirty() && !(await confirmBox("Terug naar de lijst?", "Wat je hier ingevuld of gewijzigd hebt en nog niet opgeslagen is, gaat verloren.", "Terug zonder opslaan", true))) return; closeDn(); });
+$("#dnPdfOnly").addEventListener("click", () => {
+  if (!dn) return; if (!pdfReady) return toast("De PDF-module is nog niet geladen.");
+  const doc = dnDoc(); doc.nummer = dnNumberInfo().nummer || "";
+  try { localDownload(dnPdfName(doc), renderPdf(doc, layoutDN, dnTitle(doc)).output("blob")); toast("PDF gedownload. Deze leveringsbon is nog niet opgeslagen.", 5000); } catch (err) { console.error(err); toast("De PDF kon niet gemaakt worden."); }
+});
+$("#dnSave").addEventListener("click", dnSaveAction);
+const DN_MEE = {
+  pas:{NL:"Paspoort", FR:"Passeport", EN:"Passport"}, eig:{NL:"Eigendomsbewijs", FR:"Certificat de propriété", EN:"Certificate of ownership"},
+  dek:{NL:"Dekbewijs", FR:"Certificat de saillie", EN:"Covering certificate"}, gez:{NL:"Gezondheidscertificaat", FR:"Certificat sanitaire", EN:"Health certificate"},
+  hal:{NL:"Halster en touw", FR:"Licol et longe", EN:"Halter and lead rope"}
+};
+$("#dnMeeQuick").addEventListener("click", e => {
+  const b = e.target.closest("button[data-k]"); if (!b || !dn) return;
+  const t = DN_MEE[b.dataset.k][dn.taal] || DN_MEE[b.dataset.k].EN;
+  const lines = String(dn.mee || "").split("\n").map(x => x.trim()).filter(Boolean);
+  if (!lines.some(x => norm(x) === norm(t))) lines.push(t);
+  dn.mee = lines.join("\n"); $("#dnMee").value = dn.mee; dnSchedule();
+});
+
 function switchTab(name, setHash = true){
   document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   document.querySelectorAll(".tab").forEach(s => s.hidden = s.id !== "tab-" + name);
   if (name === "maken") scheduleUpdate();
+  if (name === "leveringsbonnen") dnSchedule();
   if (setHash && location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
 }
 document.querySelectorAll(".tabs button").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 window.addEventListener("hashchange", () => { const h = location.hash.slice(1); if (!h.includes("=") && document.getElementById("tab-" + h)) switchTab(h); });
-let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(scheduleUpdate, 120); });
+let resizeT; window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { scheduleUpdate(); dnSchedule(); }, 120); });
 
 /* ---------- boot ---------- */
 function setSync(text, cls){ const s = $("#sync"); s.textContent = text; s.className = "sync " + (cls || ""); }
@@ -2359,6 +2905,7 @@ function rerenderData(){
   if (!document.activeElement?.closest?.("#texts")) renderTexts();
   if (!document.activeElement?.closest?.("#lines")) { refreshHorseLines(); renderLines(); }
   renderKlantBox(); renderFacturen(); renderKlanten(); renderPaarden(); renderTeksten(); renderInstellingen(); scheduleUpdate();
+  renderLeveringsbonnen(); dnRefresh();
 }
 const BASE_URL = location.origin + location.pathname.replace(/[^/]*$/, "");
 function showGate(text, canLogin, err){
@@ -2416,11 +2963,11 @@ async function boot(){
   const h = authHash ? "" : location.hash.slice(1);
   const startTab = document.getElementById("tab-" + h) ? h : "maken";
   switchTab(startTab, false);
-  renderAll(); renderFacturen(); renderKlanten(); renderTeksten(); renderInstellingen();
+  renderAll(); renderFacturen(); renderKlanten(); renderTeksten(); renderInstellingen(); renderLeveringsbonnen(); dnShow();
   if (window.jspdf?.jsPDF) {
     await installPreviewFonts();
     await new Promise(r => logoImg.complete ? r() : (logoImg.onload = logoImg.onerror = r));
-    pdfReady = true; updatePreview();
+    pdfReady = true; updatePreview(); dnSchedule();
   } else { $("#paper").innerHTML = `<div class="note err">De PDF-module kon niet laden. Herlaad de pagina.</div>`; }
   if (window.__TEST_TOKEN) account = {name:"Test Gebruiker", username:"test@dsf.be"};
   else {
