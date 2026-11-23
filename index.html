@@ -402,6 +402,7 @@ a.btn{text-decoration:none}
             </div>
             <div class="row" style="margin-top:8px">
               <label class="field" style="flex:1 1 200px"><span>Bij factuur (optioneel)</span><input id="dnFactuur" type="text" autocomplete="off" spellcheck="false" placeholder="bv. 202646041"></label>
+              <button class="btn" id="dnKiesFactuur" style="align-self:flex-end" title="Een factuur kiezen en klant, leveradres, taal en paarden overnemen">Factuur kiezen…</button>
             </div>
             <div id="dnNrMsg" class="hint" style="margin-top:6px"></div>
           </div>
@@ -2780,6 +2781,38 @@ async function startDnFromFactuur(f){
   openDn(dnFromFactuur(f));
   toast(`Leveringsbon voor factuur ${f.nummer}: controleer en vul aan`, 5000);
 }
+function pickFactuur(onPick){
+  let q = "", idx = 0, list = [];
+  dialog.innerHTML = `<h3>Factuur kiezen</h3><p class="hint" style="margin:0 0 8px">Klant, leveradres, taal en paarden van de factuur worden overgenomen. Alles blijft daarna aan te passen.</p>
+    <input id="fp-q" type="text" placeholder="Zoek op nummer, klant of omschrijving" autocomplete="off"><ul class="hlist" id="fp-list" role="listbox"></ul>
+    <div class="foot"><button class="btn ghost" id="fp-cancel">Annuleren</button></div>`;
+  const paint = () => {
+    const nq = norm(q);
+    list = realFacturen().filter(f => !f.wachtrij && (!nq || norm(`${f.nummer} ${f.klant?.naam} ${f.omschrijving || ""} ${(f.regels || []).map(r => r.titel).join(" ")}`).includes(nq)))
+      .sort((a, b) => (b.jaar - a.jaar) || ((b.volgnr ?? -1) - (a.volgnr ?? -1)) || String(b.datum).localeCompare(String(a.datum))).slice(0, 80);
+    idx = Math.min(idx, Math.max(0, list.length - 1));
+    $("#fp-list").innerHTML = list.length ? list.map((f, i) => {
+      const om = f.historiek ? (f.omschrijving || "") : (f.regels || []).map(r => r.titel).filter(Boolean).join(" · ");
+      const lb = dnLabel(f);
+      return `<li role="option" data-i="${i}" aria-selected="${i === idx}"><span><b>${esc(f.nummer)}</b> · ${esc(f.klant?.naam || "")}<br><small>${esc(om)}${lb ? `<br>al ${esc(lb.replace(/^ · /, ""))}` : ""}</small></span><small style="text-align:right;white-space:nowrap">${esc(fmtDate(f.datum))}</small></li>`;
+    }).join("") : `<li style="cursor:default"><small>Geen facturen gevonden.</small></li>`;
+  };
+  modalDone = null; modal.hidden = false; paint(); setTimeout(() => $("#fp-q")?.focus(), 20);
+  const choose = i => { const f = list[i]; if (!f) return; closeModal(true); onPick(f); };
+  $("#fp-q").addEventListener("input", e => { q = e.target.value; idx = 0; paint(); });
+  $("#fp-q").addEventListener("keydown", e => { if (e.key === "ArrowDown") { idx = Math.min(list.length - 1, idx + 1); paint(); e.preventDefault(); } if (e.key === "ArrowUp") { idx = Math.max(0, idx - 1); paint(); e.preventDefault(); } if (e.key === "Enter") { e.preventDefault(); choose(idx); } });
+  $("#fp-list").addEventListener("click", e => { const li = e.target.closest("li[data-i]"); if (li) choose(+li.dataset.i); });
+  $("#fp-cancel").addEventListener("click", () => closeModal(undefined));
+}
+async function dnTakeFactuur(f){
+  if (!dn) return;
+  const filled = dn.klantId || dn.klantSnap || String(dn.adres || "").trim() || dn.regels.some(r => r.omschrijving.trim() || r.chip.trim() || r.extra.trim());
+  if (filled && !(await confirmBox(`Gegevens van factuur ${f.nummer} overnemen?`, "Klant, leveradres, taal en paarden worden vervangen door die van de factuur. Transportbedrijf, nummerplaat, ook geleverd en opmerking blijven staan.", "Overnemen"))) return;
+  const nd = dnFromFactuur(f);
+  Object.assign(dn, {klantId:nd.klantId, klantSnap:nd.klantSnap, taal:nd.taal, factuur:nd.factuur, adres:nd.adres, regels:nd.regels});
+  renderDnForm(); dnSchedule();
+  toast(`Gegevens van factuur ${f.nummer} overgenomen: controleer en pas aan waar nodig`, 5000);
+}
 function dnLabel(f){
   if (f.wachtrij) return "";
   const ds = state.leveringsbonnen.filter(d => d.factuurId === f.id || (d.factuur && d.factuur === f.nummer));
@@ -2862,6 +2895,7 @@ $("#dnAddHorse").addEventListener("click", () => pickHorse(p => {
   dnHorseFill(dn.regels[dn.regels.length - 1], p, dn.taal, dn.datum); renderDnLines(); dnSchedule();
 }));
 $("#dnKiesKlant").addEventListener("click", () => pickKlant(dnSetKlant));
+$("#dnKiesFactuur").addEventListener("click", () => pickFactuur(dnTakeFactuur));
 $("#dnNewKlant").addEventListener("click", () => openKlantModal(null, {}, dnSetKlant));
 $("#dnOtherKlant").addEventListener("click", () => { if (!dn) return; dn.klantId = null; dn.klantSnap = null; renderDnForm(); dnSchedule(); pickKlant(dnSetKlant); });
 $("#dnBack").addEventListener("click", async () => { if (dnDirty() && !(await confirmBox("Terug naar de lijst?", "Wat je hier ingevuld of gewijzigd hebt en nog niet opgeslagen is, gaat verloren.", "Terug zonder opslaan", true))) return; closeDn(); });
