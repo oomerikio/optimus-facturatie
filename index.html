@@ -199,6 +199,8 @@ td .sub{color:var(--muted);font-size:12px}
 .sgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;max-width:960px}
 @media (max-width:760px){.sgrid{grid-template-columns:minmax(0,1fr)}}
 .sgrid .card{display:flex;flex-direction:column;gap:10px}
+.paygrid{display:grid;grid-template-columns:110px repeat(3,minmax(0,1fr));gap:8px;align-items:center}.paygrid b{font-size:12px;color:var(--muted)}
+@media (max-width:760px){.paygrid{grid-template-columns:minmax(0,1fr)}.paygrid b,.paygrid>span:first-child{display:none}}
 
 /* modal + toast */
 .modal{position:fixed;inset:0;z-index:20;background:rgba(8,14,11,.45);display:grid;place-items:center;padding:16px}
@@ -306,6 +308,20 @@ a.btn{text-decoration:none}
             </div>
           </div>
           <div id="nrMsg" class="hint" style="margin-top:6px"></div>
+          <div class="row" style="margin-top:10px">
+            <label class="field" style="flex:0 1 240px"><span>Betaling</span><select id="payType">
+              <option value="direct">Onmiddellijk (standaard)</option>
+              <option value="d8">Binnen 8 dagen</option><option value="d14">Binnen 14 dagen</option><option value="d30">Binnen 30 dagen</option><option value="d60">Binnen 60 dagen</option>
+              <option value="dx">Ander aantal dagen…</option>
+              <option value="datum">Vaste datum…</option>
+              <option value="tekst">Eigen tekst…</option>
+              <option value="geen">Niets vermelden</option>
+            </select></label>
+            <label class="field" id="payDaysF" style="flex:0 1 110px" hidden><span>Aantal dagen</span><input id="payDays" type="number" min="1" max="365" inputmode="numeric"></label>
+            <label class="field" id="payDateF" style="flex:0 1 170px" hidden><span>Uiterlijk op</span><input id="payDate" type="date"></label>
+            <label class="field" id="payTextF" style="flex:1 1 260px" hidden><span>Tekst op de factuur</span><input id="payText" type="text" maxlength="140" autocomplete="off"></label>
+          </div>
+          <div id="payMsg" class="hint" style="margin-top:6px"></div>
         </div>
 
         <div class="card">
@@ -523,6 +539,17 @@ a.btn{text-decoration:none}
         <label class="field" style="max-width:220px"><span>Standaard btw-tarief</span>
           <select id="s-standaardBtw"><option value="0">0%</option><option value="6">6%</option><option value="12">12%</option><option value="21">21%</option></select></label>
         <div><button class="btn" id="saveDefaults">Opslaan</button></div>
+      </div>
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-h"><h2>Betalingstermijn op de factuur</h2></div>
+        <p class="hint" style="margin:0">De zinnen die links naast het totaal komen. {dagen} en {datum} vult de app zelf in. Al gemaakte facturen houden hun tekst.</p>
+        <div class="paygrid">
+          <span></span><b>NL</b><b>EN</b><b>FR</b>
+          <span>Onmiddellijk</span><input id="pt-direct-NL" type="text"><input id="pt-direct-EN" type="text"><input id="pt-direct-FR" type="text">
+          <span>Aantal dagen</span><input id="pt-dagen-NL" type="text"><input id="pt-dagen-EN" type="text"><input id="pt-dagen-FR" type="text">
+          <span>Vaste datum</span><input id="pt-datum-NL" type="text"><input id="pt-datum-EN" type="text"><input id="pt-datum-FR" type="text">
+        </div>
+        <div class="row" style="gap:8px"><button class="btn primary" id="savePayT">Zinnen opslaan</button><button class="btn ghost" id="resetPayT">Standaardzinnen terugzetten</button></div>
       </div>
     </div>
   </section>
@@ -1095,6 +1122,54 @@ function wrap(text, width, size, style){
   }
   return out;
 }
+/* betalingstermijn: alleen op facturen die een keuze hebben (oudere facturen blijven ongewijzigd) */
+/* zinnen van facturen gemaakt voor de teksten aanpasbaar werden (blijven zo bij opnieuw downloaden) */
+const PAY_LEGACY = {
+  EN:{now:"Payable immediately", days:(n, d) => `Payable within ${n} days, by ${d}`, by:d => `Payable by ${d}`},
+  NL:{now:"Onmiddellijk betaalbaar", days:(n, d) => `Betaalbaar binnen ${n} dagen, uiterlijk ${d}`, by:d => `Betaalbaar uiterlijk ${d}`},
+  FR:{now:"Payable immédiatement", days:(n, d) => `Payable à ${n} jours, au plus tard le ${d}`, by:d => `Payable au plus tard le ${d}`}
+};
+/* standaardzinnen; aan te passen in Instellingen ({dagen} en {datum} vult de app in) */
+const DEFAULT_PAYT = {
+  direct:{NL:"Betaling bij ontvangst", EN:"Payable upon receipt", FR:"Payable à réception"},
+  dagen:{NL:"Betaalbaar binnen {dagen} dagen, uiterlijk {datum}", EN:"Payable within {dagen} days, by {datum}", FR:"Payable à {dagen} jours, au plus tard le {datum}"},
+  datum:{NL:"Betaalbaar uiterlijk {datum}", EN:"Payable by {datum}", FR:"Payable au plus tard le {datum}"}
+};
+const PAY_MAXW = LBL_X - X0 - 4;
+function addDays(iso, n){ const [y, m, d] = String(iso || "").split("-").map(Number); if (!y) return ""; const t = new Date(Date.UTC(y, m - 1, d + Number(n || 0))); return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1, 2)}-${pad(t.getUTCDate(), 2)}`; }
+function payTpl(kind, taal){ const own = String(state.betalingTeksten?.[kind]?.[taal] || "").trim(); return own || DEFAULT_PAYT[kind][taal] || DEFAULT_PAYT[kind].EN; }
+function payResolve(b, taal, datum){
+  if (!b) return "";
+  const fill = (t, n, d) => t.replace(/\{dagen\}/g, String(n)).replace(/\{datum\}/g, d);
+  if (b.type === "direct") return payTpl("direct", taal);
+  if (b.type === "dagen") return Number(b.dagen) > 0 ? fill(payTpl("dagen", taal), Number(b.dagen), fmtDate(addDays(datum, b.dagen))) : "";
+  if (b.type === "datum") return b.datum ? fill(payTpl("datum", taal), "", fmtDate(b.datum)) : "";
+  return "";
+}
+function payLegacy(inv){
+  const b = inv.betaling, P = PAY_LEGACY[inv.taal] || PAY_LEGACY.EN;
+  if (b.type === "dagen") return Number(b.dagen) > 0 ? P.days(Number(b.dagen), fmtDate(addDays(inv.datum, b.dagen))) : "";
+  if (b.type === "datum") return b.datum ? P.by(fmtDate(b.datum)) : "";
+  return P.now;
+}
+function payText(inv){
+  const b = inv.betaling; if (!b || b.type === "geen") return "";
+  if (b.type === "tekst") return String(b.tekst || "").trim();
+  if (typeof b.tekstOpFactuur === "string") return b.tekstOpFactuur;
+  return payLegacy(inv);
+}
+/* betaling van het concept, met de zin zoals die nu op de factuur komt */
+function draftPay(){
+  const b = {...(draft.betaling || {type:"direct"})}; delete b.tekstOpFactuur;
+  if (["direct", "dagen", "datum"].includes(b.type)) b.tekstOpFactuur = payResolve(b, draft.taal, draft.datum);
+  return b;
+}
+function payDue(inv){ const b = inv.betaling; if (!b) return null; if (b.type === "direct") return inv.datum || null; if (b.type === "dagen" && Number(b.dagen) > 0) return addDays(inv.datum, b.dagen); if (b.type === "datum") return b.datum || null; return null; }
+function payTerm(inv){
+  const txt = payText(inv); if (!txt) return null;
+  let size = 9; while (size > 7 && measure(txt, size, "italic") > PAY_MAXW) size -= 0.5;
+  return {s:txt, size, fits:measure(txt, size, "italic") <= PAY_MAXW};
+}
 function layout(inv){
   const L = LBL[inv.taal] || LBL.EN, b = {...DEFAULT_BEDRIJF, ...(inv.bedrijf || {})}, k = inv.klant || {};
   const t = totals(inv.regels || []);
@@ -1164,6 +1239,7 @@ function layout(inv){
       T(L.net, LBL_X, yNet, {style:"bold"}); T(money(t.net, L), PRICE_X, yNet, {style:"bold", align:"right"}); T("EUR", EUR_X, yNet, {style:"bold"});
       vatLines.forEach((v, j) => { const yy = yNet + LH * (j + 1); T(v.label, LBL_X, yy, {style:"bold"}); T(money(v.v, L), PRICE_X, yy, {style:"bold", align:"right"}); T("EUR", EUR_X, yy, {style:"bold"}); });
       LN(X0, Y_LINE_TOP, X1, Y_LINE_TOP);
+      { const pt = payTerm(inv); if (pt) T(pt.s, X0, Y_TOTAL, {size:pt.size, style:"italic"}); }
       T(L.total, LBL_X, Y_TOTAL, {style:"bold"}); T(money(t.total, L), PRICE_X, Y_TOTAL, {style:"bold", align:"right"}); T("EUR", EUR_X, Y_TOTAL, {style:"bold"});
       LN(X0, Y_LINE_BOT, X1, Y_LINE_BOT);
     }
@@ -1506,6 +1582,7 @@ function rebuildState(){
   state.bedrijf = inst.bedrijf || {};
   state.nummering = inst.nummering || {laatste:{}};
   state.instellingen = {standaardBtw:21, ...(inst.algemeen || {})};
+  state.betalingTeksten = inst.betaling || {};
   state.facturen = Object.keys(files).filter(n => /^facturen-\d{4}\.json$/.test(n)).flatMap(listOf);
   state.leveringsbonnen = Object.keys(files).filter(n => /^leveringsbonnen-\d{4}\.json$/.test(n)).flatMap(listOf);
   for (const it of queue()) {
@@ -1793,7 +1870,7 @@ async function linkAllPdfs(){
 
 const DRAFT_KEY = "optimus-concept-v1";
 function blankLine(){ return {titel:"", omschrijving:"", prijs:null, prijsTxt:"", btw: Number(state.instellingen.standaardBtw ?? 21)}; }
-function blankDraft(){ return {klantId:null, klantSnap:null, datum:todayISO(), taal:"EN", regels:[blankLine()], teksten:[], verkoopId:null, editId:null, nummer:null, nrManual:""}; }
+function blankDraft(){ return {klantId:null, klantSnap:null, datum:todayISO(), taal:"EN", regels:[blankLine()], teksten:[], verkoopId:null, editId:null, nummer:null, nrManual:"", betaling:{type:"direct"}}; }
 let draft = ls.get(DRAFT_KEY) || blankDraft();
 if (!Array.isArray(draft.regels) || !draft.regels.length) draft.regels = [blankLine()];
 let lastCreated = null;
@@ -1882,7 +1959,8 @@ function draftToInvoice(){
     regels: draft.regels.filter(r => r.titel.trim() || r.omschrijving.trim() || typeof r.prijs === "number").map(r => ({titel:r.titel.trim(), omschrijving:r.omschrijving.replace(/\s+$/, ""), prijs:typeof r.prijs === "number" ? r.prijs : null, btw:Number(r.btw) || 0, ...(r.paardId ? {paardId:r.paardId} : {})})),
     teksten: draft.teksten.map(t => t.tekst.replace(/\s+$/, "")).filter(s => s.trim()),
     bedrijf: draft.editId ? (draft.bedrijfSnap || bedrijf()) : bedrijf(),
-    verkoopId: draft.verkoopId || null
+    verkoopId: draft.verkoopId || null,
+    betaling: draftPay()
   };
 }
 const createLabel = () => draft.editId ? "Wijzigingen opslaan + PDF" : (online ? "Factuur aanmaken + PDF" : "Factuur aanmaken + PDF (zonder verbinding)");
@@ -1936,6 +2014,20 @@ function renderMeta(){
     }
   } else h = draft.editId ? "Typ een ander nummer om het nummer van deze factuur te wijzigen." : (connFailed && !state.loaded ? "Geen gegevens uit SharePoint op deze pc: typ zelf het factuurnummer." : "Leeg laten voor het automatische nummer, of typ zelf een nummer.");
   const msg = $("#nrMsg"); msg.textContent = h; msg.className = bad ? "hint bad" : "hint";
+  renderPay();
+}
+function renderPay(){
+  const b = draft.betaling || {type:"direct"};
+  const v = b.type === "dagen" ? ([8, 14, 30, 60].includes(Number(b.dagen)) && !b.ander ? "d" + Number(b.dagen) : "dx") : b.type;
+  const sel = $("#payType"); if (document.activeElement !== sel) sel.value = v;
+  $("#payDaysF").hidden = v !== "dx"; $("#payDateF").hidden = v !== "datum"; $("#payTextF").hidden = v !== "tekst";
+  const setV = (id, val) => { const el = $(id); if (document.activeElement !== el) el.value = val ?? ""; };
+  setV("#payDays", b.type === "dagen" ? (b.dagen || "") : ""); setV("#payDate", b.type === "datum" ? (b.datum || "") : ""); setV("#payText", b.type === "tekst" ? (b.tekst || "") : "");
+  const inv = {taal:draft.taal, datum:draft.datum, betaling:draftPay()}, pt = payTerm(inv), m = $("#payMsg");
+  if (b.type === "geen") { m.textContent = "Er komt niets over de betaling op de factuur."; m.className = "hint"; return; }
+  if (!pt) { m.textContent = ""; m.className = "hint"; return; }
+  m.textContent = `Op de factuur, links naast het totaal: ${pt.s}` + (pt.fits ? (pt.size < 9 ? " (iets kleiner gezet om in de balk te passen)" : "") : " — te lang voor de balk, maak de tekst korter");
+  m.className = pt.fits ? "hint" : "hint bad";
 }
 function renderLines(){
   const host = $("#lines"); host.innerHTML = "";
@@ -2002,6 +2094,11 @@ function validate(inv){
   if (ni.manual && ni.conflict) errs.push(`Factuurnummer ${ni.nummer} is al gebruikt door factuur ${ni.conflict.nummer}.`);
   if (ni.manual && !/^[A-Za-z0-9_\-.\/]+$/.test(ni.nummer)) errs.push("Het factuurnummer mag alleen cijfers, letters en - . / bevatten.");
   if (!inv.regels.length) errs.push("Voeg ten minste één goed of prestatie toe.");
+  const bt = inv.betaling || {};
+  if (bt.type === "dagen" && !(Number(bt.dagen) >= 1 && Number(bt.dagen) <= 365)) errs.push("Betaling: vul een aantal dagen in (1 tot 365).");
+  if (bt.type === "datum" && !/^\d{4}-\d{2}-\d{2}$/.test(bt.datum || "")) errs.push("Betaling: kies de datum waarop uiterlijk betaald moet worden.");
+  if (bt.type === "tekst" && !String(bt.tekst || "").trim()) errs.push("Betaling: typ de tekst voor de factuur, of kies Niets vermelden.");
+  { const pt = payTerm(inv); if (pt && !pt.fits) errs.push("Betaling: de tekst is te lang voor de balk onderaan. Maak ze korter."); }
   draft.regels.forEach((r, i) => {
     if (!r.titel.trim() && !r.omschrijving.trim() && !r.prijsTxt) return;
     if (!r.titel.trim()) errs.push(`Regel ${i + 1}: vul de naam van het goed of de prestatie in.`);
@@ -2070,6 +2167,19 @@ $("#tekstKies").addEventListener("change", e => {
 });
 $("#addOwnText").addEventListener("click", () => { draft.teksten.push({tekstId:null, tekst:"", bewerkt:true}); renderTexts(); scheduleUpdate(); $(`#t-tekst-${draft.teksten.length - 1}`)?.focus(); });
 $("#datum").addEventListener("input", e => { draft.datum = e.target.value; scheduleUpdate(); });
+$("#payType").addEventListener("change", e => {
+  const v = e.target.value, old = draft.betaling || {};
+  if (/^d\d+$/.test(v)) draft.betaling = {type:"dagen", dagen:Number(v.slice(1))};
+  else if (v === "dx") draft.betaling = {type:"dagen", dagen:old.type === "dagen" ? old.dagen : "", ander:true};
+  else if (v === "datum") draft.betaling = {type:"datum", datum:old.type === "datum" ? old.datum : ""};
+  else if (v === "tekst") draft.betaling = {type:"tekst", tekst:old.type === "tekst" ? old.tekst : (payResolve(old, draft.taal, draft.datum) || "")};
+  else draft.betaling = {type:v};
+  renderPay(); scheduleUpdate();
+  const focus = {dx:"#payDays", datum:"#payDate", tekst:"#payText"}[v]; if (focus) setTimeout(() => $(focus)?.focus(), 20);
+});
+$("#payDays").addEventListener("input", e => { draft.betaling = {type:"dagen", dagen:e.target.value === "" ? "" : Number(e.target.value), ander:true}; renderPay(); scheduleUpdate(); });
+$("#payDate").addEventListener("input", e => { draft.betaling = {type:"datum", datum:e.target.value}; renderPay(); scheduleUpdate(); });
+$("#payText").addEventListener("input", e => { draft.betaling = {type:"tekst", tekst:e.target.value}; renderPay(); scheduleUpdate(); });
 $("#nrManual").addEventListener("input", e => { draft.nrManual = e.target.value; scheduleUpdate(); });
 $("#taalSeg").addEventListener("click", e => { const b = e.target.closest("button[data-taal]"); if (!b) return; draft.taal = b.dataset.taal; refreshTexts(); renderTexts(); renderLines(); renderMeta(); scheduleUpdate(); });
 
@@ -2126,7 +2236,7 @@ async function createOrSave(){
   const btn = $("#createBtn"); btn.disabled = true; btn.textContent = "Bezig…";
   try {
     const t = totals(inv.regels);
-    Object.assign(inv, {netto:t.net, btwBedrag:t.vat, totaal:t.total});
+    Object.assign(inv, {netto:t.net, btwBedrag:t.vat, totaal:t.total, vervaldatum:payDue(inv)});
     const info = finalNumberInfo();
     let saved;
     if (draft.editId) {
@@ -2157,7 +2267,7 @@ async function createOrSave(){
 async function createOrSaveOffline(inv){
   if (draft.editId) { toast("Een bestaande factuur aanpassen kan pas als de verbinding met SharePoint terug is.", 6000); return; }
   try {
-    const t = totals(inv.regels); Object.assign(inv, {netto:t.net, btwBedrag:t.vat, totaal:t.total});
+    const t = totals(inv.regels); Object.assign(inv, {netto:t.net, btwBedrag:t.vat, totaal:t.total, vervaldatum:payDue(inv)});
     const saved = createOffline(inv);
     lastCreated = saved;
     $("#doneNr").textContent = saved.nummer;
@@ -2283,6 +2393,7 @@ $("#fBody").addEventListener("click", async e => {
     draft.regels = (f.historiek ? [{titel:f.omschrijving || "", omschrijving:"", prijs:typeof f.netto === "number" ? f.netto : null, btw:Number(state.instellingen.standaardBtw ?? 21)}] : (f.regels || [])).map(r => ({titel:r.titel || "", omschrijving:r.omschrijving || "", prijs:r.prijs, prijsTxt:typeof r.prijs === "number" ? eur(r.prijs) : "", btw:r.btw, ...(r.paardId ? {paardId:r.paardId, paardAuto:false} : {})}));
     if (!draft.regels.length) draft.regels = [blankLine()];
     draft.teksten = (f.teksten || []).map(s => ({tekstId:null, tekst:s, bewerkt:true}));
+    draft.betaling = f.betaling ? {...f.betaling} : {type: b.dataset.act === "edit" ? "geen" : "direct"};
     if (b.dataset.act === "edit") { draft.editId = f.id; draft.nummer = f.nummer; draft.nrManual = f.nummer; draft.datum = f.datum; draft.bedrijfSnap = f.bedrijf || null; draft.verkoopId = f.verkoopId || null; }
     $("#doneCard").hidden = true; renderAll(); switchTab("maken");
     toast(b.dataset.act === "edit" ? `Factuur ${f.nummer} geopend om aan te passen` : `Kopie van ${f.nummer}: pas aan en maak een nieuwe factuur`);
@@ -2505,8 +2616,18 @@ function renderInstellingen(){
   const o = expectedNumber(todayISO());
   $("#n-next").innerHTML = o ? `Volgende factuur met datum vandaag: <span class="nr">${nrString(o)}</span>` : "";
   $("#s-standaardBtw").value = String(state.instellingen.standaardBtw ?? 21);
+  renderPayTpl();
   $("#locText").innerHTML = loc ? `SharePoint-site <b>${esc(loc.siteName)}</b>, map <a href="${esc(loc.webUrl)}" target="_blank" rel="noopener">${esc(CONFIG.folderPath)}</a>.` : "Niet verbonden.";
 }
+const PAY_KINDS = ["direct", "dagen", "datum"], PAY_LANGS = ["NL", "EN", "FR"];
+function renderPayTpl(){ for (const k of PAY_KINDS) for (const l of PAY_LANGS) { const el = $(`#pt-${k}-${l}`); if (el && document.activeElement !== el) el.value = payTpl(k, l); } }
+$("#savePayT").addEventListener("click", async () => {
+  if (!online) return toast("Niet verbonden met SharePoint.");
+  const v = {}; for (const k of PAY_KINDS) { v[k] = {}; for (const l of PAY_LANGS) v[k][l] = $(`#pt-${k}-${l}`).value.trim(); }
+  if (PAY_LANGS.some(l => v.dagen[l] && !v.dagen[l].includes("{dagen}"))) return toast("Bij Aantal dagen moet {dagen} in de zin staan.", 5000);
+  try { await ops.saveInst("betaling", v); toast("Zinnen voor de betalingstermijn opgeslagen"); } catch (e) { toast("Opslaan is niet gelukt: " + e.message); }
+});
+$("#resetPayT").addEventListener("click", () => { for (const k of PAY_KINDS) for (const l of PAY_LANGS) $(`#pt-${k}-${l}`).value = DEFAULT_PAYT[k][l]; toast("Standaardzinnen teruggezet. Klik op Zinnen opslaan om ze te bewaren.", 5000); });
 $("#n-jaar").addEventListener("input", () => { $("#n-laatste").value = state.nummering?.laatste?.[Number($("#n-jaar").value)] ?? ""; });
 $("#saveBedrijf").addEventListener("click", async () => {
   if (!online) return toast("Niet verbonden met SharePoint.");
